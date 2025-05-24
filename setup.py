@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="syntera-ai",
-    version="0.1.1",
+    version="0.1.2",
     author="Fouad Mahmoud",
     author_email="fouadmahmoud281@gmail.com",
     description="An AI-powered DevOps toolkit for infrastructure automation and analysis",
@@ -29,18 +29,24 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-        "langchain>=0.1.0",
-        "langchain-openai>=0.0.2",
-        "openai>=1.0.0",
-        "rich>=13.0.0",
-        "typer>=0.9.0",
-        "python-dotenv>=1.0.0",
-        "boto3>=1.28.0",
-        "gitpython>=3.1.0",
+        "langchain>=0.3.25",
+        "langchain-core>=0.3.60",
+        "langchain-openai>=0.3.17",
+        "openai>=1.81.0",
+        "rich>=14.0.0",
+        "typer>=0.15.4",
+        "python-dotenv>=1.1.0",
+        "boto3>=1.38.21",
+        "gitpython>=3.1.44",
+        "gitingest>=0.1.2",
+        "httpx>=0.28.1",
+        "pygithub>=2.6.1",
+        "keyboard>=0.13.5",
+        "setuptools>=75.2.0",
     ],
     entry_points={
         "console_scripts": [
             "syntera-ai=devops_ai.cli:app",
         ],
     },
-) 
+)
