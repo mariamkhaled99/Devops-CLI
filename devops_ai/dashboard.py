@@ -3,230 +3,158 @@ from rich.layout import Layout
 from rich.live import Live
 from rich.prompt import Prompt
 from datetime import datetime
-import os
-from pathlib import Path
 
-from .core import DevOpsAITools
+from typing import Dict, Callable, Tuple
 from .ui.panels import (
-    create_header, create_tools_panel, create_content_panel,
-    create_footer, create_input_panel, create_result_table
+    create_header,
+    create_tools_panel,
+    create_content_panel,
+    create_footer,
+    create_input_panel,
+    create_result_table
 )
 from .ui.tool_handlers import ToolHandlers
 
+import keyboard
+
+from .core import DevOpsAITools
+
+
 class TextDashboard:
-    """An enhanced text-based dashboard for SynteraAI DevOps."""
-    
+    """An enhanced text-based dashboard for SynteraAI DevOps with keyboard navigation."""
+
     def __init__(self):
         self.console = Console()
-        self.devops_tools = DevOpsAITools()
         self.layout = Layout()
+        self.devops_tools = DevOpsAITools()
         self.tool_handlers = ToolHandlers(self.devops_tools, self.console)
-        
-        # Track the active tool for highlighting
-        self.active_tool = None
-        self.github_repo_url = None  # To store the GitHub repository URL
-        self.local_repo_path = None  # To store the local repository path
+
+        # Track active tool for highlighting
+        self.active_tool_index = 0
+        self.github_repo_url = None
 
     def _display_result(self, result: str, title: str) -> None:
-        """Display the result in a more structured and visually appealing way."""
+        """Display the result in a structured and visually appealing way."""
         result_group = create_result_table(result, title)
-        
-        # Update the content panel
         self.layout["content"].update(create_content_panel(result_group))
-        
+
     def run(self):
-        """Run the enhanced dashboard with better user experience."""
+        """Run the dashboard with keyboard navigation and scrolling."""
         self.console.clear()
 
-        # Create the layout structure first
+        # Setup layout structure
         self.layout.split_column(
             Layout(name="header", size=3),
             Layout(name="body", ratio=8),
             Layout(name="input", size=3),
-            Layout(name="footer", size=2)
+            Layout(name="footer", size=2),
         )
-        
-        # Split the body into tools panel and content area with better proportions
+
         self.layout["body"].split_row(
             Layout(name="tools", ratio=1),
-            Layout(name="content", ratio=3)
+            Layout(name="content", ratio=3),
         )
-        
+
         # Initial layout setup
         self.layout["header"].update(create_header())
-        self.layout["tools"].update(create_tools_panel())
+        self.layout["tools"].update(self._render_tools_panel())
         self.layout["content"].update(create_content_panel())
         self.layout["input"].update(create_input_panel())
         self.layout["footer"].update(create_footer())
 
-        # Prompt for GitHub repository URL at the start
+        # Prompt for GitHub repository URL at startup
         self.console.print("\n")
         self.github_repo_url = Prompt.ask(
             "[bold green]►[/bold green] [bold cyan]Enter the GitHub repository URL to work on[/bold cyan]",
-            default="https://github.com/example/repo" # Provide a default or leave empty
+            default="https://github.com/example/repo "
         )
-        
-        # Clone the repository and get the local path
         clone_output, self.local_repo_path = self.tool_handlers.set_repository(self.github_repo_url)
-        
-        # Display clone output if any
         if clone_output:
             self._display_result(clone_output, "Git Clone Output")
-        
-        # Display the initial layout
-        with Live(self.layout, refresh_per_second=4, auto_refresh=False) as live:
-            live.refresh()
-            
+
+        handlers = {
+            "1": self.tool_handlers.analyze_logs,
+            "2": self.tool_handlers.infrastructure,
+            "3": self.tool_handlers.security_scan,
+            "4": self.tool_handlers.optimize,
+            "5": self.tool_handlers.git_ingest,
+            "6": self.tool_handlers.code_quality,
+            "7": self.tool_handlers.dependency_check,
+            "8": self.tool_handlers.contributors,
+            "9": self.tool_handlers.docker_generation,
+        }
+
+        # Start Live rendering
+        with Live(self.layout, refresh_per_second=10, screen=True) as live:
             while True:
-                # Exit the Live context to get user input
-                live.stop()
-                
-                # Get user input with better visibility
-                self.console.print("\n")
-                choice = Prompt.ask(
-                    "[bold green]►[/bold green] [bold cyan]Select a tool[/bold cyan]",
-                    choices=["1", "2", "3", "4", "5", "6", "7", "8", "9", "q"],
-                    default="q"
-                )
-                
-                # Resume the Live display
-                live.start()
-                
-                if choice == "q":
+                key = self._get_keypress()
+
+                if key == "q":
                     break
-                
-                # Update active tool for highlighting
-                self.active_tool = choice
-                self.layout["tools"].update(create_tools_panel(self.active_tool))
-                live.refresh()
-                
-                # Process based on choice with enhanced status indicators
-                if choice == "1":
-                    # Update input panel with specific prompt
-                    self.layout["input"].update(create_input_panel("Enter log file path"))
-                    live.refresh()
-                    
-                    # Exit Live context to get input
-                    live.stop()
-                    result, title = self.tool_handlers.analyze_logs()
-                    live.start()
-                    
-                    self._display_result(result, title)
-                
-                elif choice == "2":
-                    # Infrastructure suggestions
-                    prompt = "Enter infrastructure context"
-                    if self.github_repo_url:
-                        prompt = f"Generating infrastructure suggestions for {self.github_repo_url}"
-                    
-                    self.layout["input"].update(create_input_panel(prompt))
+                elif key == "KEY_UP" or key == "k":
+                    self.active_tool_index = max(0, self.active_tool_index - 1)
+                elif key == "KEY_DOWN" or key == "j":
+                    self.active_tool_index = min(8, self.active_tool_index + 1)
+
+                # Update only the tools panel with the current tool
+                self.layout["tools"].update(self._render_tools_panel())
+                live.refresh()  # Refresh is essential for real-time updates
+
+                if key == "\r":  # Enter key pressed
+                    active_tool_key = str(self.active_tool_index + 1)
+                    self.layout["input"].update(create_input_panel(f"Running {active_tool_key}..."))
                     live.refresh()
 
-                    live.stop()
-                    result, title = self.tool_handlers.infrastructure()
-                    live.start()
+                    handler = handlers.get(active_tool_key)
+                    if handler:
+                        live.stop()
+                        result, title = handler()
+                        live.start()
+                        self._display_result(result, title)
 
-                    self._display_result(result, title)
-                
-                elif choice == "3":
-                    # Security scan
-                    self.layout["input"].update(create_input_panel("Enter target to scan"))
-                    live.refresh()
-                    
-                    live.stop()
-                    result, title = self.tool_handlers.security_scan()
-                    live.start()
-                    
-                    self._display_result(result, title)
-                
-                elif choice == "4":
-                    # Optimization
-                    self.layout["input"].update(create_input_panel("Enter optimization context"))
-                    live.refresh()
-                    
-                    live.stop()
-                    result, title = self.tool_handlers.optimize()
-                    live.start()
-                    
-                    self._display_result(result, title)
-
-                elif choice == "5":
-                    # Git ingest
-                    if not self.github_repo_url:
-                        self.console.print("[bold red]GitHub repository URL not set. Please restart or set it.[/bold red]")
-                        live.refresh()
-                        continue
-
-                    self.layout["input"].update(create_input_panel(f"Processing Git Ingest for {self.github_repo_url}"))
-                    live.refresh()
-                    
-                    result, title = self.tool_handlers.git_ingest()
-                    self._display_result(result, title)
-
-                elif choice == "6":
-                    # Code quality
-                    if not self.github_repo_url:
-                        self.console.print("[bold red]GitHub repository URL not set. Please restart or set it.[/bold red]")
-                        live.refresh()
-                        continue
-
-                    self.layout["input"].update(create_input_panel(f"Analyzing code quality for {self.github_repo_url}"))
-                    live.refresh()
-                    
-                    result, title = self.tool_handlers.code_quality()
-                    self._display_result(result, title)
-
-                elif choice == "7":
-                    # Dependency check
-                    if not self.github_repo_url:
-                        self.console.print("[bold red]GitHub repository URL not set. Please restart or set it.[/bold red]")
-                        live.refresh()
-                        continue
-
-                    self.layout["input"].update(create_input_panel(f"Checking dependencies for {self.github_repo_url}"))
-                    live.refresh()
-                    
-                    result, title = self.tool_handlers.dependency_check()
-                    self._display_result(result, title)
-
-                elif choice == "8":
-                    # Contributors
-                    if not self.github_repo_url:
-                        self.console.print("[bold red]GitHub repository URL not set. Please restart or set it.[/bold red]")
-                        live.refresh()
-                        continue
-
-                    self.layout["input"].update(create_input_panel(f"Fetching contributors for {self.github_repo_url}"))
-                    live.refresh()
-                    
-                    result, title = self.tool_handlers.contributors()
-                    self._display_result(result, title)
-                
-                elif choice == "9":
-                    # Docker generation
-                    if not self.github_repo_url:
-                        self.console.print("[bold red]GitHub repository URL not set. Please restart or set it.[/bold red]")
-                        live.refresh()
-                        continue
-
-                    self.layout["input"].update(create_input_panel(f"Generating Docker files for {self.github_repo_url}"))
+                    self.layout["input"].update(create_input_panel())
                     live.refresh()
 
-                    # Avoid Progress inside Live context to prevent crash
-                    live.stop()
-                    result, title = self.tool_handlers.docker_generation()
-                    live.start()
-                    
-                    self._display_result(result, title)
+    def _render_tools_panel(self):
+        tools = [
+            {"key": "1", "icon": "📊", "name": "Analyze Logs", "desc": "Analyze log files for patterns and errors"},
+            {"key": "2", "icon": "🏗️", "name": "Infrastructure", "desc": "Get infrastructure recommendations"},
+            {"key": "3", "icon": "🔒", "name": "Security Scan", "desc": "Perform security vulnerability scanning"},
+            {"key": "4", "icon": "⚡", "name": "Optimize", "desc": "Performance optimization suggestions"},
+            {"key": "5", "icon": "⚙️", "name": "Git Ingest", "desc": "Ingest and process GitHub repository"},
+            {"key": "6", "icon": "🧑‍💻", "name": "Code Quality", "desc": "Analyze code quality and maintainability"},
+            {"key": "7", "icon": "📦", "name": "Dependency Check", "desc": "Check outdated or vulnerable dependencies"},
+            {"key": "8", "icon": "👥", "name": "Contributors", "desc": "Show contributor statistics and activity"},
+            {"key": "9", "icon": "🐳", "name": "Docker Generation", "desc": "Generate Docker and docker-compose files"}
+        ]
 
-                # Reset input panel after any operation
-                self.layout["input"].update(create_input_panel())
-                live.refresh()
+        # Get the current tool
+        current_tool = tools[self.active_tool_index]
+
+        return create_tools_panel(current_tool)
+
+    def _get_keypress(self):
+        event = keyboard.read_event()
+        if event.event_type == keyboard.KEY_DOWN:
+            key = event.name
+            if key == 'up':
+                return "KEY_UP"
+            elif key == 'down':
+                return "KEY_DOWN"
+            elif key == 'enter':
+                return "\r"
+            elif key == 'q':
+                return "q"
+            elif key.isdigit() and 1 <= int(key) <= 9:
+                return key
+        return None
+
 
 def main():
     """Main entry point for the dashboard."""
     dashboard = TextDashboard()
     dashboard.run()
 
+
 if __name__ == "__main__":
-        main()
+    main()

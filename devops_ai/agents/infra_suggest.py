@@ -7,6 +7,7 @@ import getpass
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 import uuid
+import yaml
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -20,8 +21,77 @@ class InfraSuggestAgent(BaseAgent):
         self.aws_credentials = None
         # Validate OpenAI API key on initialization
         self._validate_api_credentials()
+        
+    def _analyze_aws_instance_requirements(self, component: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze component requirements and suggest optimal AWS instance type"""
+        prompt = f"""Based on the following component requirements, suggest the optimal AWS EC2 instance type:
 
-    def analyze(self, query: str = "", repo_path: str = None, generate_iac: bool = False, deploy: bool = False) -> str:
+Component: {component.get('component', 'Unknown')}
+Description: {component.get('description', 'No description')}
+CPU Cores: {component.get('cpu_cores', 'Not specified')}
+Memory: {component.get('memory_gb', 'Not specified')} GB
+Storage: {component.get('storage', 'Not specified')}
+Networking: {component.get('networking', 'Not specified')}
+Scaling: {component.get('scaling', 'Not specified')}
+
+Please provide your recommendation in the following JSON format:
+{{
+    "instance_type": "Recommended EC2 instance type",
+    "reasoning": "Explanation for the recommendation",
+    "cost_estimate": "Estimated monthly cost",
+    "performance_characteristics": {{
+        "cpu": "CPU performance characteristics",
+        "memory": "Memory performance characteristics",
+        "network": "Network performance characteristics"
+    }},
+    "alternative_options": [
+        {{
+            "instance_type": "Alternative instance type",
+            "pros": ["List of advantages"],
+            "cons": ["List of disadvantages"]
+        }}
+    ]
+}}
+"""
+        try:
+            response = self.llm.invoke(prompt)
+            response_text = response.content.strip()
+            
+            # Try to extract JSON from potentially markdown-wrapped response
+            # Check if response is wrapped in markdown code blocks
+            if "```json" in response_text:
+                start_idx = response_text.find("```json") + 7
+                end_idx = response_text.rfind("```")
+                if end_idx > start_idx:
+                    response_text = response_text[start_idx:end_idx].strip()
+            elif response_text.startswith("```"):
+                start_idx = response_text.find("```") + 3
+                end_idx = response_text.rfind("```")
+                if end_idx > start_idx:
+                    response_text = response_text[start_idx:end_idx].strip()
+            
+            try:
+                recommendation = json.loads(response_text)
+                return recommendation
+            except json.JSONDecodeError as json_err:
+                logger.error(f"JSON decode error: {json_err}. Raw response: {response_text[:100]}...")
+                raise
+                
+        except Exception as e:
+            logger.error(f"Error analyzing AWS instance requirements: {str(e)}")
+            return {
+                "instance_type": "t3.micro",
+                "reasoning": "Fallback to t3.micro due to analysis error",
+                "cost_estimate": "Unknown",
+                "performance_characteristics": {
+                    "cpu": "1 vCPU",
+                    "memory": "1 GB",
+                    "network": "Low to Moderate"
+                },
+                "alternative_options": []
+            }
+
+    def analyze(self, query: str = "", repo_path: str = None, generate_iac: bool = False, deploy: bool = False, iac_format: str = "cloudformation") -> str:
         """
         Get infrastructure recommendations based on repository context or user query.
         Optionally generate Infrastructure as Code (IAC) and deploy to AWS.
@@ -29,8 +99,9 @@ class InfraSuggestAgent(BaseAgent):
         Args:
             query: Optional natural language input for infrastructure suggestions
             repo_path: Path to local git repository for contextual analysis
-            generate_iac: Whether to generate CloudFormation templates
+            generate_iac: Whether to generate IAC templates (CloudFormation or Ansible)
             deploy: Whether to deploy the infrastructure to AWS
+            iac_format: Format of IAC to generate ("cloudformation" or "ansible")
 
         Returns:
             str: Infrastructure recommendations in structured format
@@ -49,10 +120,11 @@ class InfraSuggestAgent(BaseAgent):
             if repo_path:
                 try:
                     repo_data = self.analyze_repository(repo_path)
+                    detected_services = self._detect_services_from_repo(repo_data)
                     repo_summary = {
                         "structure": repo_data.get("tree", {}),
                         "key_files": self._extract_key_file_contents(repo_path),
-                        "services": self._detect_services_from_repo(repo_data)
+                        "services": detected_services
                     }
 
                     repo_context = self._format_repo_context_for_prompt(repo_summary)
@@ -61,8 +133,8 @@ class InfraSuggestAgent(BaseAgent):
                     logger.warning(f"Failed to extract repository context: {str(e)}")
 
             # Build prompt for LLM
-            prompt = f"""Based on the following context, provide detailed infrastructure recommendations. 
-If no specific context is given, assume a modern microservice-based application in single aws conatain images of each component.
+            prompt = f"""Based on the following context, provide detailed infrastructure recommendations for ONLY the detected components/services in the repository. 
+DO NOT invent or assume components that are not explicitly mentioned in the detected services list.
 
 {repo_context}
 
@@ -71,12 +143,11 @@ User Query: {query}
 Please provide your response in the following JSON format, wrapped in triple backticks:
 ```json
 {{
-  "architecture_overview": "High-level architecture description",
+  "architecture_overview": "High-level architecture description based ONLY on the detected components",
   "infrastructure_recommendations": [
     {{
-      "component": "Service/Component name",
-      "description": "What this component does",
-      "aws_ec2_instance_type": "Recommended AWS EC2 instance type",
+      "component": "Service/Component name (MUST match one of the detected components)",
+      "description": "What this component does based on repository context",
       "cpu_cores": "Number of CPU cores needed",
       "memory_gb": "Memory (RAM) required in GB",
       "storage": "Storage requirements (e.g., '100GB SSD')",
@@ -136,7 +207,6 @@ Please provide your response in the following JSON format, wrapped in triple bac
                         {
                             "component": "General Infrastructure",
                             "description": response_text[:500] + ("..." if len(response_text) > 500 else ""),
-                            "aws_ec2_instance_type": "Not specified",
                             "cpu_cores": "Not specified",
                             "memory_gb": "Not specified",
                             "storage": "Not specified",
@@ -151,6 +221,12 @@ Please provide your response in the following JSON format, wrapped in triple bac
                     "deployment_pipeline_suggestions": "See raw output"
                 }
 
+            # Analyze AWS instance requirements for each component
+            for comp in json_response.get("infrastructure_recommendations", []):
+                instance_analysis = self._analyze_aws_instance_requirements(comp)
+                comp["aws_ec2_instance_type"] = instance_analysis["instance_type"]
+                comp["instance_analysis"] = instance_analysis
+
             # Write report or logs if needed
             self._save_infra_recommendation_report(repo_path, json_response)
             
@@ -158,10 +234,16 @@ Please provide your response in the following JSON format, wrapped in triple bac
             iac_output = ""
             if generate_iac:
                 try:
-                    iac_templates = self._generate_cloudformation_templates(json_response)
-                    self._save_cloudformation_templates(repo_path, iac_templates)
-                    iac_output = "\n\n=== INFRASTRUCTURE AS CODE GENERATED ===\n"
-                    iac_output += f"CloudFormation templates have been generated in {repo_path}/cloudformation/\n"
+                    if iac_format.lower() == "ansible":
+                        iac_templates = self._generate_ansible_playbooks(json_response)
+                        self._save_ansible_playbooks(repo_path, iac_templates)
+                        iac_output = "\n\n=== INFRASTRUCTURE AS CODE GENERATED ===\n"
+                        iac_output += f"Ansible playbooks have been generated in {repo_path}/ansible/\n"
+                    else:  # Default to CloudFormation
+                        iac_templates = self._generate_cloudformation_templates(json_response)
+                        self._save_cloudformation_templates(repo_path, iac_templates)
+                        iac_output = "\n\n=== INFRASTRUCTURE AS CODE GENERATED ===\n"
+                        iac_output += f"CloudFormation templates have been generated in {repo_path}/cloudformation/\n"
                 except Exception as e:
                     logger.error(f"Error generating IAC: {str(e)}", exc_info=True)
                     iac_output = f"\n\nError generating Infrastructure as Code: {str(e)}"
@@ -174,7 +256,10 @@ Please provide your response in the following JSON format, wrapped in triple bac
                 
                 if self.aws_credentials:
                     try:
-                        deployment_result = self._deploy_to_aws(repo_path, json_response)
+                        if iac_format.lower() == "ansible":
+                            deployment_result = self._deploy_with_ansible(repo_path, json_response)
+                        else:
+                            deployment_result = self._deploy_to_aws(repo_path, json_response)
                         deployment_output = "\n\n=== DEPLOYMENT STATUS ===\n"
                         deployment_output += deployment_result
                     except Exception as e:
@@ -211,20 +296,117 @@ Please provide your response in the following JSON format, wrapped in triple bac
                     file_contents[fname] = f"[ERROR reading file: {e}]"
         return file_contents
 
-    def _detect_services_from_repo(self, repo_data: dict) -> List[str]:
-        """Try to detect services/components from repository structure"""
+    def _detect_services_from_repo(self, repo_data: dict) -> List[Dict[str, Any]]:
+        """Try to detect services/components from repository structure with detailed information"""
         services = []
-
-        # Detect common services by folder names
-        service_keywords = ["api", "web", "worker", "db", "cache", "gateway", "auth", "search"]
-
+        service_names = set()
+        
+        # Get repository tree
         tree = repo_data.get("tree", {})
+        
+        # 1. Detect services from Dockerfiles
+        for path in tree.keys():
+            if "dockerfile" in path.lower() or path.lower().endswith(".dockerfile"):
+                # Extract service name from Dockerfile.service_name pattern
+                parts = os.path.basename(path).split('.')
+                if len(parts) > 1 and parts[0].lower() == "dockerfile":
+                    service_name = parts[1].lower()
+                    if service_name not in service_names:
+                        service_names.add(service_name)
+                        services.append({
+                            "component": service_name,
+                            "description": f"Service identified from {path}",
+                            "source": "dockerfile"
+                        })
+        
+        # 2. Detect services from docker-compose.yml
+        docker_compose_paths = [p for p in tree.keys() if p.lower().endswith("docker-compose.yml")]
+        for dc_path in docker_compose_paths:
+            try:
+                # Try to read docker-compose.yml content from repo_data or file system
+                dc_content = None
+                if "content" in repo_data and dc_path in repo_data["content"]:
+                    dc_content = repo_data["content"][dc_path]
+                else:
+                    # Attempt to read from file system if available
+                    full_path = os.path.join(os.path.dirname(dc_path), "docker-compose.yml")
+                    if os.path.exists(full_path):
+                        with open(full_path, 'r') as f:
+                            dc_content = f.read()
+                
+                if dc_content:
+                    # Parse YAML content
+                    try:
+                        dc_yaml = yaml.safe_load(dc_content)
+                        if dc_yaml and "services" in dc_yaml:
+                            for svc_name, svc_config in dc_yaml["services"].items():
+                                if svc_name not in service_names:
+                                    service_names.add(svc_name)
+                                    # Extract more details if available
+                                    description = f"Service defined in docker-compose.yml"
+                                    if "image" in svc_config:
+                                        description += f", using image {svc_config['image']}"
+                                    
+                                    services.append({
+                                        "component": svc_name,
+                                        "description": description,
+                                        "source": "docker-compose"
+                                    })
+                    except Exception as e:
+                        logger.warning(f"Error parsing docker-compose.yml: {str(e)}")
+            except Exception as e:
+                logger.warning(f"Error processing docker-compose file {dc_path}: {str(e)}")
+        
+        # 3. Detect services from common project structures
+        service_dirs = set()
+        service_keywords = ["api", "web", "service", "worker", "db", "database", "cache", "gateway", "auth", "frontend", "backend"]
+        
         for path in tree.keys():
             parts = path.split("/")
-            if len(parts) > 1 and parts[0] in service_keywords:
-                services.append(parts[0])
-
-        return list(set(services))
+            if len(parts) > 1:
+                # Check if first directory component is a service keyword
+                if parts[0].lower() in service_keywords and parts[0] not in service_names:
+                    service_dirs.add(parts[0])
+        
+        # Add services from directory structure
+        for svc_dir in service_dirs:
+            if svc_dir not in service_names:
+                service_names.add(svc_dir)
+                services.append({
+                    "component": svc_dir,
+                    "description": f"Service identified from directory structure",
+                    "source": "directory"
+                })
+        
+        # 4. If no services detected, add default components based on repository type
+        if not services:
+            # Check for common application types
+            has_frontend = any("index.html" in p.lower() for p in tree.keys())
+            has_backend = any(p.lower().endswith((".py", ".js", ".java", ".go")) for p in tree.keys())
+            
+            if has_frontend:
+                services.append({
+                    "component": "frontend",
+                    "description": "Frontend web application detected from repository structure",
+                    "source": "inferred"
+                })
+            
+            if has_backend:
+                services.append({
+                    "component": "backend",
+                    "description": "Backend application detected from repository structure",
+                    "source": "inferred"
+                })
+            
+            # If still no services detected, add a generic application component
+            if not services:
+                services.append({
+                    "component": "application",
+                    "description": "Generic application component",
+                    "source": "default"
+                })
+        
+        return services
 
     def _format_repo_context_for_prompt(self, repo_summary: dict) -> str:
         """Format repository data into a prompt-friendly string"""
@@ -241,9 +423,12 @@ Please provide your response in the following JSON format, wrapped in triple bac
                 context += f"\n--- {fname} ---\n{content[:500]}...\n"
 
         if "services" in repo_summary and repo_summary["services"]:
-            context += "\nDetected Services:\n"
+            context += "\nDetected Services/Components:\n"
             for svc in repo_summary["services"]:
-                context += f"- {svc}\n"
+                component = svc.get("component", "Unknown")
+                description = svc.get("description", "No description")
+                source = svc.get("source", "Unknown")
+                context += f"- {component}: {description} (Source: {source})\n"
 
         return context
 
@@ -751,3 +936,352 @@ Provide ONLY the CloudFormation template JSON without any explanations or markdo
         except Exception as e:
             logger.error(f"Deployment error: {str(e)}", exc_info=True)
             return f"Deployment error: {str(e)}"
+
+    def _generate_ansible_playbooks(self, infra_recommendations: Dict[str, Any]) -> Dict[str, str]:
+        """Generate Ansible playbooks based on infrastructure recommendations using LLM"""
+        # Extract key information from recommendations
+        components = infra_recommendations.get("infrastructure_recommendations", [])
+        architecture_overview = infra_recommendations.get("architecture_overview", "")
+        
+        # Build prompt for LLM to generate Ansible playbooks
+        prompt = f"""Generate complete Ansible playbooks based on the following infrastructure requirements.
+
+Architecture Overview:
+{architecture_overview}
+
+Infrastructure Components:
+"""
+
+        # Add each component's details to the prompt
+        for comp in components:
+            prompt += f"""
+- Component: {comp.get('component', 'Unknown')}
+  Description: {comp.get('description', 'No description')}
+  EC2 Instance Type: {comp.get('aws_ec2_instance_type', 't3.micro')}
+  CPU: {comp.get('cpu_cores', 'Not specified')} cores
+  Memory: {comp.get('memory_gb', 'Not specified')} GB
+  Storage: {comp.get('storage', 'Not specified')}
+  Networking: {comp.get('networking', 'Not specified')}
+  Availability Zones: {comp.get('availability_zones', 'Not specified')}
+  Scaling Strategy: {comp.get('scaling', 'Not specified')}
+"""
+        
+        # Add instructions for generating the Ansible playbooks
+        prompt += """
+
+Please generate the following Ansible playbooks in YAML format:
+
+1. A main playbook (main.yml) that includes all component roles
+2. Individual component playbooks for each infrastructure component
+3. An inventory file (inventory.yml) that defines the hosts and groups
+
+The playbooks should include:
+- Appropriate tasks for provisioning and configuring each component
+- Variables for customization
+- Handlers for service management
+- Tags for selective execution
+- Proper error handling and idempotence
+- Security best practices
+
+Provide the playbooks in the following format:
+```yaml
+# [filename.yml]
+# Playbook content here
+```
+
+For example:
+```yaml
+# main.yml
+- name: Deploy Infrastructure
+  hosts: all
+  become: true
+  roles:
+    - webserver
+    - database
+```
+
+Ensure the playbooks follow Ansible best practices and are optimized for AWS deployment.
+"""
+
+        logger.info("Invoking LLM to generate Ansible playbooks...")
+        try:
+            # Invoke LLM to generate the Ansible playbooks
+            response = self.llm.invoke(prompt)
+            playbooks_text = response.content.strip()
+            
+            # Parse the response to extract individual playbooks
+            playbook_sections = self._extract_playbooks_from_response(playbooks_text)
+            
+            if not playbook_sections:
+                logger.warning("Failed to extract playbooks from LLM response, using fallback")
+                return self._generate_fallback_ansible_playbooks(infra_recommendations)
+            
+            return playbook_sections
+            
+        except Exception as e:
+            logger.error(f"Error generating Ansible playbooks with LLM: {str(e)}")
+            # Create fallback playbooks if LLM invocation fails
+            return self._generate_fallback_ansible_playbooks(infra_recommendations)
+    
+    def _extract_playbooks_from_response(self, response_text: str) -> Dict[str, str]:
+        """Extract individual playbooks from LLM response"""
+        playbooks = {}
+        
+        # Look for playbook sections in the format: ```yaml\n# [filename.yml]\n...
+        import re
+        pattern = r'```(?:yaml)?\s*#\s*\[?([\w\.-]+\.yml)\]?\s*([\s\S]*?)```'
+        matches = re.findall(pattern, response_text)
+        
+        if not matches:
+            # Try alternative pattern without the filename in brackets
+            pattern = r'```(?:yaml)?\s*#\s*([\w\.-]+\.yml)\s*([\s\S]*?)```'
+            matches = re.findall(pattern, response_text)
+        
+        if not matches:
+            # Try another pattern with just the filename as a comment
+            pattern = r'```(?:yaml)?\s*([\w\.-]+\.yml)\s*([\s\S]*?)```'
+            matches = re.findall(pattern, response_text)
+            
+        if not matches:
+            # Last attempt: look for sections with clear filename headers but without code blocks
+            pattern = r'# ([\w\.-]+\.yml)\s*([\s\S]*?)(?=# [\w\.-]+\.yml|$)'
+            matches = re.findall(pattern, response_text)
+        
+        for filename, content in matches:
+            # Clean up the content
+            clean_content = content.strip()
+            # Remove the filename if it appears at the beginning of the content
+            if clean_content.startswith(filename):
+                clean_content = clean_content[len(filename):].strip()
+            
+            playbooks[filename.strip()] = clean_content
+        
+        # If we couldn't extract any playbooks with the patterns, try to parse the whole response
+        if not playbooks and '---' in response_text:
+            # This might be a single YAML document, try to use it as main.yml
+            playbooks['main.yml'] = response_text
+        
+        return playbooks
+    
+    def _generate_fallback_ansible_playbooks(self, infra_recommendations: Dict[str, Any]) -> Dict[str, str]:
+        """Generate fallback Ansible playbooks if LLM generation fails"""
+        playbooks = {}
+        
+        # Generate main playbook
+        main_playbook = {
+            "name": "Infrastructure Deployment",
+            "hosts": "all",
+            "become": True,
+            "vars": {
+                "environment": "{{ env | default('dev') }}",
+                "region": "{{ aws_region | default('us-east-1') }}"
+            },
+            "pre_tasks": [
+                {
+                    "name": "Update apt cache",
+                    "apt": {
+                        "update_cache": "yes",
+                        "cache_valid_time": 3600
+                    },
+                    "when": "ansible_os_family == 'Debian'"
+                }
+            ],
+            "roles": []
+        }
+        
+        # Generate component-specific playbooks
+        for comp in infra_recommendations.get("infrastructure_recommendations", []):
+            component_name = comp["component"].replace(" ", "").lower()
+            
+            # Add role to main playbook
+            main_playbook["roles"].append(component_name)
+            
+            # Generate component-specific playbook
+            component_playbook = {
+                "name": f"Deploy {comp['component']}",
+                "hosts": component_name,
+                "become": True,
+                "vars": {
+                    "instance_type": comp.get("aws_ec2_instance_type", "t3.micro"),
+                    "cpu_cores": comp.get("cpu_cores", "1"),
+                    "memory_gb": comp.get("memory_gb", "1"),
+                    "storage": comp.get("storage", "20GB"),
+                    "scaling": comp.get("scaling", "single")
+                },
+                "tasks": [
+                    {
+                        "name": "Install required packages",
+                        "package": {
+                            "name": "{{ item }}",
+                            "state": "present"
+                        },
+                        "loop": [
+                            "python3",
+                            "python3-pip",
+                            "git",
+                            "docker.io"
+                        ]
+                    },
+                    {
+                        "name": "Configure system resources",
+                        "block": [
+                            {
+                                "name": "Set CPU governor",
+                                "command": "echo performance > /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor",
+                                "when": "ansible_os_family == 'Linux'"
+                            },
+                            {
+                                "name": "Configure swap space",
+                                "command": "dd if=/dev/zero of=/swapfile bs=1M count={{ memory_gb * 1024 }} && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile",
+                                "when": "ansible_os_family == 'Linux'"
+                            }
+                        ]
+                    },
+                    {
+                        "name": "Setup application directory",
+                        "file": {
+                            "path": "/opt/{{ component_name }}",
+                            "state": "directory",
+                            "mode": "0755"
+                        }
+                    }
+                ]
+            }
+            
+            # Add scaling configuration if needed
+            if "auto" in comp.get("scaling", "").lower():
+                component_playbook["tasks"].extend([
+                    {
+                        "name": "Install AWS CLI",
+                        "pip": {
+                            "name": "awscli",
+                            "state": "present"
+                        }
+                    },
+                    {
+                        "name": "Configure auto-scaling",
+                        "template": {
+                            "src": "templates/autoscaling.conf.j2",
+                            "dest": "/etc/{{ component_name }}/autoscaling.conf",
+                            "mode": "0644"
+                        }
+                    }
+                ])
+            
+            # Store component playbook
+            playbooks[f"{component_name}.yml"] = yaml.dump(component_playbook, default_flow_style=False)
+        
+        # Store main playbook
+        playbooks["main.yml"] = yaml.dump(main_playbook, default_flow_style=False)
+        
+        # Generate inventory template
+        inventory = {
+            "all": {
+                "children": {
+                    "aws": {
+                        "hosts": {},
+                        "vars": {
+                            "ansible_python_interpreter": "/usr/bin/python3",
+                            "ansible_ssh_private_key_file": "~/.ssh/aws_key.pem"
+                        }
+                    }
+                }
+            }
+        }
+        
+        # Add component hosts to inventory
+        for comp in infra_recommendations.get("infrastructure_recommendations", []):
+            component_name = comp["component"].replace(" ", "").lower()
+            instance_type = comp.get("aws_ec2_instance_type", "t3.micro")
+            inventory["all"]["children"]["aws"]["hosts"][f"{component_name}-{{{{ env }}}}"] = {
+                "ansible_host": f"{{{{ lookup('aws_ec2', 'instance_type={instance_type}') }}}}"
+            }
+        
+        playbooks["inventory.yml"] = yaml.dump(inventory, default_flow_style=False)
+        
+        return playbooks
+
+    def _save_ansible_playbooks(self, repo_path: str, playbooks: Dict[str, str]) -> None:
+        """Save Ansible playbooks to the repository"""
+        if not repo_path or not os.path.isdir(repo_path):
+            logger.warning("No valid repository path provided for saving Ansible playbooks")
+            return
+            
+        # Create ansible directory structure
+        ansible_dir = os.path.join(repo_path, "ansible")
+        roles_dir = os.path.join(ansible_dir, "roles")
+        templates_dir = os.path.join(ansible_dir, "templates")
+        
+        os.makedirs(ansible_dir, exist_ok=True)
+        os.makedirs(roles_dir, exist_ok=True)
+        os.makedirs(templates_dir, exist_ok=True)
+        
+        # Save main playbook and inventory
+        for playbook_name, content in playbooks.items():
+            if playbook_name in ["main.yml", "inventory.yml"]:
+                playbook_path = os.path.join(ansible_dir, playbook_name)
+                try:
+                    with open(playbook_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    logger.info(f"Saved Ansible playbook to {playbook_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to save Ansible playbook {playbook_name}: {str(e)}")
+        
+        # Save component playbooks in their respective role directories
+        for playbook_name, content in playbooks.items():
+            if playbook_name not in ["main.yml", "inventory.yml"]:
+                component_name = playbook_name.replace(".yml", "")
+                role_dir = os.path.join(roles_dir, component_name)
+                tasks_dir = os.path.join(role_dir, "tasks")
+                
+                os.makedirs(role_dir, exist_ok=True)
+                os.makedirs(tasks_dir, exist_ok=True)
+                
+                playbook_path = os.path.join(tasks_dir, "main.yml")
+                try:
+                    with open(playbook_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    logger.info(f"Saved component playbook to {playbook_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to save component playbook {playbook_name}: {str(e)}")
+
+    def _deploy_with_ansible(self, repo_path: str, infra_recommendations: Dict[str, Any]) -> str:
+        """Deploy infrastructure using Ansible"""
+        if not self.aws_credentials:
+            return "Error: AWS credentials not available. Please provide credentials first."
+        
+        try:
+            # Generate playbooks if they don't exist
+            ansible_dir = os.path.join(repo_path, "ansible")
+            if not os.path.exists(os.path.join(ansible_dir, "main.yml")):
+                playbooks = self._generate_ansible_playbooks(infra_recommendations)
+                self._save_ansible_playbooks(repo_path, playbooks)
+            
+            # Create ansible.cfg
+            ansible_cfg = """[defaults]
+inventory = inventory.yml
+remote_user = ubuntu
+private_key_file = ~/.ssh/aws_key.pem
+host_key_checking = False
+"""
+            
+            with open(os.path.join(ansible_dir, "ansible.cfg"), "w") as f:
+                f.write(ansible_cfg)
+            
+            # Run ansible-playbook
+            import subprocess
+            result = subprocess.run(
+                ["ansible-playbook", "main.yml", "-e", f"env=dev aws_region={self.aws_credentials['region_name']}"],
+                cwd=ansible_dir,
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                return f"Deployment completed successfully!\n\nOutput:\n{result.stdout}"
+            else:
+                return f"Deployment failed!\n\nError:\n{result.stderr}"
+                
+        except Exception as e:
+            logger.error(f"Error deploying with Ansible: {str(e)}", exc_info=True)
+            return f"Error deploying with Ansible: {str(e)}"

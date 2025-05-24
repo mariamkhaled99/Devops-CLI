@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 from .core import DevOpsAITools
 from .dashboard import TextDashboard
 from devops_ai.agents.infra_suggest import InfraSuggestAgent  # Assuming this contains initialized InfraSuggestAgent
+import pkg_resources
+
 # Initialize Typer app
 app = typer.Typer(help="SynteraAI - AI-powered DevOps CLI tool")
 console = Console()
@@ -70,15 +72,6 @@ def analyze_logs(
         progress.update(task, completed=100)
     
     _display_result(result, "📊 Log Analysis Results")
-
-import typer
-
-
-
-
-
-
-
 
 @app.command()
 def infra_suggest(
@@ -147,6 +140,85 @@ def optimize(
         progress.update(task, completed=100)
     
     _display_result(result, "⚡ Optimization Recommendations")
+
+@app.command()
+def version():
+    """Show version information for syntera-ai and its dependencies."""
+    try:
+        # Get syntera-ai version
+        syntera_version = pkg_resources.get_distribution("syntera-ai").version
+        
+        # Get gitingest version
+        gitingest_version = pkg_resources.get_distribution("gitingest").version
+        
+        console.print("\n[bold cyan]Version Information:[/bold cyan]")
+        console.print(f"syntera-ai: [bold green]{syntera_version}[/bold green]")
+        console.print(f"gitingest: [bold green]{gitingest_version}[/bold green]")
+        
+    except pkg_resources.DistributionNotFound as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+    except Exception as e:
+        console.print(f"[bold red]Error getting version information:[/bold red] {str(e)}")
+
+@app.command()
+def dependencies():
+    """Show all dependencies and their versions used in the project."""
+    try:
+        # Get all installed packages
+        installed_packages = {pkg.key: pkg.version for pkg in pkg_resources.working_set}
+        
+        # Create a table to display dependencies
+        table = Table(
+            title="Project Dependencies",
+            show_header=True,
+            header_style="bold magenta",
+            border_style="blue",
+            title_style="bold cyan"
+        )
+        table.add_column("Package", style="dim")
+        table.add_column("Version", style="green")
+        
+        # Core dependencies
+        core_deps = [
+            "typer",
+            "rich",
+            "python-dotenv",
+            "gitingest",
+            "langchain",
+            "openai",
+            "anthropic",
+            "pydantic",
+            "fastapi",
+            "uvicorn",
+            "jinja2",
+            "pyyaml",
+            "requests",
+            "python-multipart",
+            "python-jose",
+            "passlib",
+            "bcrypt",
+            "aiofiles",
+            "python-magic",
+            "watchdog"
+        ]
+        
+        # Add core dependencies to table
+        for dep in sorted(core_deps):
+            version = installed_packages.get(dep.lower(), "Not installed")
+            table.add_row(dep, version)
+        
+        console.print("\n[bold cyan]Core Dependencies:[/bold cyan]")
+        console.print(table)
+        
+        # Show syntera-ai version
+        try:
+            syntera_version = pkg_resources.get_distribution("syntera-ai").version
+            console.print(f"\n[bold cyan]syntera-ai version:[/bold cyan] [bold green]{syntera_version}[/bold green]")
+        except pkg_resources.DistributionNotFound:
+            console.print("\n[bold red]syntera-ai is not installed as a package[/bold red]")
+        
+    except Exception as e:
+        console.print(f"[bold red]Error getting dependency information:[/bold red] {str(e)}")
 
 def main():
     """Main entry point for the CLI"""

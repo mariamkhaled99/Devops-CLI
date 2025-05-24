@@ -346,3 +346,5 @@ jobs:
         origin = repo.create_remote("origin", remote_url)
         origin.push()
         logger.info(f"Successfully pushed Docker files to GitHub: {remote_url}")
+
+#automtically append secrets key in the docker files

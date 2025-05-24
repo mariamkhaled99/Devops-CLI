@@ -1,186 +1,187 @@
-from rich.console import Console
+# devops_ai/ui/panels.py
+
 from rich.panel import Panel
-from rich.table import Table
-from rich.layout import Layout
 from rich.text import Text
-from rich import box
-from rich.align import Align
-from rich.rule import Rule
+from rich.columns import Columns
+from rich.table import Table
 from rich.markdown import Markdown
 from rich.padding import Padding
-from rich.console import Group
+from rich.rule import Rule
+from rich.align import Align
+from rich.box import HEAVY, ROUNDED
+from rich.style import Style
 from datetime import datetime
-
+from rich.console import Group, Console
+from rich.progress import BarColumn, Progress
+from rich import box
 
 def create_header() -> Panel:
-    """Create an enhanced header panel with more information."""
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
+
+    # Create a more visually appealing header with gradient styling
     header_group = Group(
-        Rule("SynteraAI DevOps", style="bright_cyan"),
+        Rule("✨ SynteraAI DevOps ✨", style="gradient(magenta,cyan)"),
         Text.from_markup(f"[bold cyan]🤖 SynteraAI DevOps Dashboard[/bold cyan]"),
-        Text.from_markup(f"[dim]Your AI-powered DevOps assistant | {current_time}[/dim]")
-    )
-    
-    return Panel(
-        header_group,
-        border_style="bright_blue", 
-        box=box.HEAVY_EDGE,
-        title="[bold white on blue] DevOps AI [/bold white on blue]",
-        title_align="center"
+        Text.from_markup(f"[dim]Your AI-powered DevOps assistant | [bold]{current_time}[/bold][/dim]")
     )
 
-
-def create_tools_panel(active_tool=None) -> Panel:
-    """Create an enhanced tools panel with better visual indicators."""
-    tools_group = Group()
-    
-    # Add a title with better styling
-    tools_group.renderables.append(Text("Available Tools", style="bold magenta underline"))
-    tools_group.renderables.append(Text(""))
-    
-    # Define tool options with better visual indicators and descriptions
-    tools = [
-        {"key": "1", "icon": "📊", "name": "Analyze Logs", "desc": "Analyze log files for patterns and errors"},
-        {"key": "2", "icon": "🏗️", "name": "Infrastructure", "desc": "Get infrastructure recommendations"},
-        {"key": "3", "icon": "🔒", "name": "Security Scan", "desc": "Perform security vulnerability scanning"},
-        {"key": "4", "icon": "⚡", "name": "Optimize", "desc": "Get performance optimization suggestions"},
-        {"key": "5", "icon": "⚙️", "name": "Git Ingest", "desc": "Ingest and process a GitHub repository"},
-        {"key": "6", "icon": "🧑‍💻", "name": "Code Quality", "desc": "Analyze code quality and maintainability"},
-        {"key": "7", "icon": "📦", "name": "Dependency Check", "desc": "Check for outdated or vulnerable dependencies"},
-        {"key": "8", "icon": "👥", "name": "Contributors", "desc": "Show contributor statistics and activity"},
-        {"key": "9", "icon": "🐳", "name": "Docker Generation", "desc": "Generate Docker and docker-compose files"}
-    ]
-    
-    # Add each tool with proper styling and highlighting for active tool
-    for tool in tools:
-        tool_text = Text()
-        
-        # Highlight active tool
-        if active_tool == tool["key"]:
-            prefix = "► "
-            style = "bold white on blue"
-            box_style = "on blue"
-        else:
-            prefix = "  "
-            style = "cyan"
-            box_style = ""
-        
-        # Format tool entry
-        tool_text.append(f"{prefix}{tool['key']}. {tool['icon']} ", style=style)
-        tool_text.append(f"{tool['name']}\n", style=style)
-        tool_text.append(f"   {tool['desc']}\n", style="dim")
-        
-        tools_group.renderables.append(tool_text)
-    
-    # Add navigation help
-    tools_group.renderables.append(Text(""))
-    help_text = Text()
-    help_text.append("Navigation:\n", style="bold yellow")
-    help_text.append("• Enter 1-9 to select tool\n", style="dim")
-    help_text.append("• Press 'q' to quit", style="dim")
-    tools_group.renderables.append(help_text)
-    
     return Panel(
-        Padding(tools_group, (1, 2)),
-        title="[bold white on blue] Tools [/bold white on blue]",
+        Padding(header_group, (1, 1)),
         border_style="bright_blue",
-        box=box.HEAVY,
-        title_align="center"
+        box=ROUNDED,
+        title="[bold white on bright_blue] 🚀 SynteraAI DevOps [/bold white on bright_blue]",
+        title_align="center",
+        subtitle="[dim italic]Powered by AI[/dim italic]",
+        subtitle_align="right"
     )
 
 
-def create_content_panel(content: str = "") -> Panel:
-    """Create an enhanced content panel with better formatting."""
+# devops_ai/ui/panels.py
+
+from rich.panel import Panel
+from rich.text import Text
+from rich.box import HEAVY
+
+
+def create_tools_panel(selected_tool: dict = None) -> Panel:
+    """
+    Displays only the currently selected tool in a focused panel with enhanced styling.
+    
+    Args:
+        selected_tool (dict): The tool dictionary containing name, description, icon, etc.
+    """
+    if selected_tool is None:
+        selected_tool = {
+            "key": "?",
+            "icon": "❓",
+            "name": "No Tool Selected",
+            "desc": "Use ↑ ↓ keys to navigate and press ENTER to select.",
+        }
+
+    # Create a progress bar to visually indicate selection
+    progress = Progress(
+        "[bright_blue]{task.description}",
+        BarColumn(bar_width=20, style="bright_blue", complete_style="bright_cyan"),
+        "[bright_blue]{task.percentage:>3.0f}%",
+        expand=False
+    )
+    
+    # Add a task that's 100% complete to show a full bar
+    task_id = progress.add_task("Selected", total=100)
+    progress.update(task_id, completed=100)
+    
+    # Build the tool display with enhanced styling
+    tool_group = Group(
+        Text.from_markup(f"[bold bright_cyan on bright_blue] {selected_tool['key']} [/bold bright_cyan on bright_blue] [bold white on bright_blue]{selected_tool['icon']} {selected_tool['name']}[/bold white on bright_blue]"),
+        Text(""),  # Spacer
+        Text.from_markup(f"[italic bright_white]{selected_tool['desc']}[/italic bright_white]"),
+        Text(""),  # Spacer
+        progress
+    )
+
+    return Panel(
+        Padding(tool_group, (1, 1)),
+        title="[bold white on bright_blue] 🔧 Selected Tool [/bold white on bright_blue]",
+        border_style="bright_cyan",
+        box=ROUNDED,
+        subtitle="[dim italic]Press ENTER to run[/dim italic]",
+        subtitle_align="right"
+    )
+
+
+def create_content_panel(content=None) -> Panel:
     if not content:
         welcome_md = """
-        # Welcome to SynteraAI DevOps Dashboard
+        # 🌟 Welcome to SynteraAI DevOps Dashboard 🌟
         
-        This dashboard provides AI-powered tools to help with your DevOps tasks.
+        This intelligent dashboard provides AI-powered tools to streamline your DevOps workflow.
         
-        ## Getting Started
-        1. Select a tool from the left panel
-        2. Provide the required input
-        3. View the AI-generated results here
+        ## 🚀 Getting Started
+        1. Use ↑↓ keys or numbers 1-9 to navigate the tool list
+        2. Press ENTER to activate the selected tool
+        3. View detailed analysis and results in this panel
         
-        ## Available Tools
-        - **Analyze Logs**: Find patterns and issues in your log files
-        - **Infrastructure**: Get recommendations for your infrastructure
-        - **Security Scan**: Identify security vulnerabilities
-        - **Optimize**: Discover performance optimization opportunities
+        ## 💡 Available Features
+        - Log analysis and error detection
+        - Infrastructure recommendations
+        - Security vulnerability scanning
+        - Performance optimization
+        - Code quality assessment
+        - And much more!
         """
         content = Markdown(welcome_md)
-    
+
     return Panel(
         Padding(content, (1, 2)),
-        title="[bold white on blue] Results [/bold white on blue]",
-        border_style="bright_blue",
-        box=box.HEAVY,
-        title_align="center"
+        title="[bold white on bright_blue] 📊 Results & Analysis [/bold white on bright_blue]",
+        border_style="bright_cyan",
+        box=ROUNDED,
+        title_align="center",
+        subtitle="[dim italic]Real-time insights[/dim italic]",
+        subtitle_align="right"
     )
 
 
 def create_footer() -> Panel:
-    """Create an enhanced footer panel with more information."""
     footer_group = Group(
-        Text.from_markup("[bold green]Input Instructions:[/bold green]"),
-        Text.from_markup("[white]1. Type the number (1-9) to select a tool[/white]"),
-        Text.from_markup("[white]2. Press Enter to confirm your selection[/white]"),
-        Text.from_markup("[white]3. Type 'q' to quit the application[/white]")
-    )
-    
-    return Panel(
-        Align.center(footer_group),
-        border_style="bright_green",
-        box=box.HEAVY_EDGE,
-        title="[bold white on green] Help [/bold white on green]",
-        title_align="center"
+        Text.from_markup("[bold bright_green]📝 Navigation Guide:[/bold bright_green]"),
+        Text(""),  # Spacer
+        Text.from_markup("[bright_white]• [bright_cyan]↑↓[/bright_cyan] or [bright_cyan]j/k[/bright_cyan] - Navigate through tools[/bright_white]"),
+        Text.from_markup("[bright_white]• [bright_cyan]1-9[/bright_cyan] - Directly select a tool by number[/bright_white]"),
+        Text.from_markup("[bright_white]• [bright_cyan]ENTER[/bright_cyan] - Run the selected tool[/bright_white]"),
+        Text.from_markup("[bright_white]• [bright_cyan]q[/bright_cyan] - Quit the application[/bright_white]")
     )
 
-
-def create_input_panel(prompt_text="Select a tool (1-9) or 'q' to quit") -> Panel:
-    """Create a dedicated input panel for better visibility."""
-    input_text = Text()
-    input_text.append("\n")
-    input_text.append("► ", style="bold green")
-    input_text.append(prompt_text, style="bold cyan")
-    input_text.append("\n")
-    
     return Panel(
-        input_text,
-        title="[bold white on green] Input [/bold white on green]",
+        Padding(Align.center(footer_group), (1, 1)),
         border_style="bright_green",
-        box=box.HEAVY,
+        box=ROUNDED,
+        title="[bold white on bright_green] 💡 Help & Navigation [/bold white on bright_green]",
         title_align="center",
-        padding=(1, 2)
+        subtitle="[dim italic]Keyboard shortcuts[/dim italic]",
+        subtitle_align="right"
+    )
+
+
+def create_input_panel(prompt_text="Select a tool (↑↓/1-9), ENTER to confirm, Q to quit") -> Panel:
+    input_text = Text()
+    input_text.append("▶ ", style="bold bright_green")
+    input_text.append(prompt_text, style="bold bright_cyan")
+    
+    return Panel(
+        Padding(input_text, (1, 1)),
+        border_style="bright_green",
+        box=ROUNDED,
+        title="[bold white on bright_green] 🔤 Command Input [/bold white on bright_green]",
+        title_align="center",
+        subtitle="[dim italic]Ready[/dim italic]",
+        subtitle_align="right"
     )
 
 
 def create_result_table(result: str, title: str) -> Group:
-    """Create a formatted result table."""
-    # Create a more structured table with multiple columns
+    # Create a more visually appealing table with better styling
     table = Table(
         title=title,
         show_header=True,
-        header_style="bold magenta",
-        border_style="bright_blue",
-        title_style="bold cyan",
-        box=box.HEAVY,
-        expand=True
+        header_style="bold bright_magenta",
+        border_style="bright_cyan",
+        title_style="bold bright_cyan",
+        box=box.ROUNDED,
+        expand=True,
+        row_styles=["bright_white", "bright_white dim"]
     )
-    
-    # Add columns for better organization
-    table.add_column("#", style="dim", width=3)
-    table.add_column("Finding", style="white", ratio=1)
-    
-    # Process the result into sections
+
+    table.add_column("#", style="bright_cyan", width=3, justify="center")
+    table.add_column("Finding", style="bright_white", ratio=1)
+
     sections = result.split("\n\n")
     for i, section in enumerate(sections, 1):
         if section.strip():
             table.add_row(str(i), section)
-    
-    # Create a group with a header and the table
+
     return Group(
-        Rule(title, style="bright_cyan"),
+        Rule(f"✨ {title} ✨", style="gradient(cyan,magenta)"),
+        Text(""),  # Spacer
         table
     )
