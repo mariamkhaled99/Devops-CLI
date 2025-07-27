@@ -7,7 +7,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="syntera-ai",
+    name="syntera-ai-cli",
     version="0.1.4",
     author="Fouad Mahmoud",
     author_email="fouadmahmoud281@gmail.com",
