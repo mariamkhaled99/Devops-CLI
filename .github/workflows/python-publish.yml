@@ -52,4 +52,4 @@ jobs:
 
     environment:
       name: pypi
-      url: https://pypi.org/project/syntera-ai/
+      url: https://pypi.org/project/syntera-ai-cli/
