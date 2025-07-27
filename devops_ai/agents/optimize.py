@@ -33,8 +33,9 @@ class OptimizeAgent(BaseAgent):
             3. Optimization strategies
             4. Implementation steps
             """
-            
-            response = self.llm.invoke(prompt)
-            return response.content
+            response = self.run_llm(prompt)
+            return response
+            # response = self.llm.invoke(prompt)
+            # return response.content
         except Exception as e:
             return f"Error generating optimization recommendations: {str(e)}"

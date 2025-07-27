@@ -21,7 +21,7 @@ def create_header() -> Panel:
     # Create a more visually appealing header with gradient styling
     header_group = Group(
         Rule("✨ SynteraAI DevOps ✨", style="gradient(magenta,cyan)"),
-        Text.from_markup(f"[bold cyan]🤖 SynteraAI DevOps Dashboard[/bold cyan]"),
+        Text.from_markup("[bold cyan]🤖 SynteraAI DevOps Dashboard[/bold cyan]"),
         Text.from_markup(f"[dim]Your AI-powered DevOps assistant | [bold]{current_time}[/bold][/dim]")
     )
 

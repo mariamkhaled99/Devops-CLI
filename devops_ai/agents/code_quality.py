@@ -40,8 +40,9 @@ class CodeQualityAgent(BaseAgent):
             3. Suggestions for improvement
             4. Best practices
             """
-            
-            response = self.llm.invoke(prompt)
-            return response.content
+            response_text = self.run_llm(prompt)
+            return response_text
+            # response = self.llm.invoke(prompt)
+            # return response.content
         except Exception as e:
             return f"Error analyzing code quality: {str(e)}"

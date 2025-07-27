@@ -5,6 +5,8 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
 from ..core import DevOpsAITools
+from rich.prompt import Prompt
+
 
 
 class ToolHandlers:
@@ -226,13 +228,51 @@ class ToolHandlers:
             result = self.devops_tools._contributors(self.github_repo_url)
             progress.update(task, advance=50)
 
-        return result, "👥 Contributor Statistics"
-
+            return result, "👥 Contributor Statistics"
     def docker_generation(self) -> Tuple[str, str]:
-        """Handle docker generation tool."""
+        """Handle docker generation tool with optional .env input."""
         if not self.github_repo_url:
             return "GitHub repository URL not set. Please restart or set it.", "🐳 Docker Generation Error"
 
+        env_path = None
+        pasted_env = ""
+
+        # ⚠️ STOP Live before prompting input
+        if hasattr(self, "live"):
+            self.live.stop()
+
+        have_env = Prompt.ask(
+            "[yellow]?[/yellow] Do you have a `.env` file you want to use? (y/n)",
+            choices=["y", "n"], default="y"
+        )
+
+        if have_env == "y":
+            self.console.print("[green]Paste your `.env` content below. Type 'EOF' on a new line to finish.[/green]")
+            self.console.print("[italic dim]Example:\nKEY=value\nDEBUG=True\nEOF[/italic dim]\n")
+
+            env_lines = []
+            while True:
+                try:
+                    line = input()
+                except EOFError:
+                    break
+                if line.strip().upper() == "EOF":
+                    break
+                env_lines.append(line)
+
+            pasted_env = "\n".join(env_lines)
+
+            if pasted_env:
+                env_path = os.path.join(self.local_repo_path, ".env")
+                with open(env_path, "w", encoding="utf-8") as f:
+                    f.write(pasted_env)
+                self.console.print(f"[bold green].env file saved at {env_path}[/bold green]")
+
+        # ✅ RESTART Live rendering (if previously stopped)
+        if hasattr(self, "live"):
+            self.live.start()
+
+        # Show progress while generating Docker files
         result = ""
         with Progress(
             SpinnerColumn(),
@@ -242,8 +282,28 @@ class ToolHandlers:
         ) as progress:
             task = progress.add_task("DockerGeneration", total=100)
             progress.update(task, advance=50)
-            # Use the local repo path for Docker generation
-            result = self.devops_tools._docker_generation(self.local_repo_path)
+            result = self.devops_tools._docker_generation(self.local_repo_path, env_path)
             progress.update(task, advance=50)
 
         return result, "🐳 Docker Generation Results"
+
+
+    def analyze_repo(self) -> Tuple[str, str]:
+        """Handle repository analysis tool for detecting framework, port, and entry-point."""
+
+        # Get repository path from user
+        # repo_path = self.console.input("[bold green]►[/bold green] [bold cyan]Enter repository path[/bold cyan]")
+
+        result = ""
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold cyan]Analyzing repository...[/bold cyan]"),
+            BarColumn(bar_width=40),
+            TextColumn("[bold cyan]Please wait[/bold cyan]"),
+        ) as progress:
+            task = progress.add_task("Analyzing", total=100)
+            progress.update(task, advance=50)
+            result = self.devops_tools._repo_analyze(self.local_repo_path)
+            progress.update(task, advance=50)
+
+        return result, "🧠 Repository Analysis Results"

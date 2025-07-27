@@ -1,69 +1,104 @@
+
+
 import os
 from typing import List, Union, Dict
-from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 from gitingest import ingest, ingest_from_query, clone_repo, parse_query
 import urllib3
 import ssl
-import httpx  # Change from requests to httpx
+import httpx
+import csv
+from datetime import datetime
+from pathlib import Path
 
-# Temporarily disable SSL warnings and certificate verification
-# WARNING: This is not recommended for production use
+# LLM clients
+from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic # type: ignore
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+# Disable SSL warnings – not recommended for production
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 os.environ["CURL_CA_BUNDLE"] = ""
 os.environ["REQUESTS_CA_BUNDLE"] = ""
 os.environ["SSL_CERT_FILE"] = ""
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
 
+
 class BaseAgent:
-    """Base agent class that provides common functionality for all tool agents."""
+    """Base agent class that supports OpenAI or Anthropic as backend LLM."""
     
     def __init__(self):
         try:
             # Create httpx client with SSL verification disabled
             http_client = httpx.Client(verify=False)
+
+            # Check which LLM provider is available
+            # openai_key = os.getenv("OPENAI_API_KEY")
+            anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+            gemeini_key = os.getenv("GEMINI_API_KEY")
+            # print(f"Using LLM API key: {anthropic_key if anthropic_key else 'None'}")
+
+            # if openai_key:
+            #     # Initialize OpenAI LLM
+            #     self.llm = ChatOpenAI(
+            #         temperature=0,
+            #         model_name="gpt-4-turbo-preview",
+            #         openai_api_key=openai_key,
+            #         http_client=http_client,
+            #     )
+            #     print("Using OpenAI (ChatOpenAI)")
+            if gemeini_key:
+                # Initialize Google Gemini LLM
+                self.llm = ChatGoogleGenerativeAI(
+                    model="gemini-2.5-flash",
+                temperature=0.2,
+                google_api_key=os.getenv("GEMINI_API_KEY")
+                )
+                print("Using Google Gemini (ChatGoogleGenerativeAI)")
+
+            # if anthropic_key:
+            #     # Initialize Anthropic LLM
+            #     self.llm = ChatAnthropic(
+            #         temperature=0,
+            #         model="claude-sonnet-4-20250514",
+            #         anthropic_api_key=anthropic_key,
+            #         # http_client=http_client,
+            #     )
+                # print("Using Anthropic (ChatAnthropic)")
+               
+            else:
+                raise ValueError("No LLM API key found. Please set OPENAI_API_KEY or ANTHROPIC_API_KEY.")
             
-            self.llm = ChatOpenAI(
-                temperature=0,
-                model_name="gpt-4-turbo-preview",
-                openai_api_key=os.getenv("OPENAI_API_KEY"),
-                # Use proper httpx client
-                http_client=http_client,
-            )
-            print("ChatOpenAI instance created successfully")
-        except Exception as e:
-            print(f"Error initializing ChatOpenAI: {str(e)}")
+            if self.llm:
+                self.model_name = self.model_name = getattr(self.llm, "model", "claude-3-7-sonnet-latest")
+                self.total_tokens_used = 0
+                self.total_cost_usd = 0.0
+                self.budget_usd = float(os.getenv("LLM_BUDGET", 5.0))  # Default $5 budget
+                
+            print("LLM Provider:", type(self.llm).__name__)
+
+        except ssl.SSLError as e:
+            print(f"SSL error initializing LLM: {str(e)}")
             raise
-    
+        except Exception as e:
+            print(f"Error initializing LLM: {str(e)}")
+            raise
+
     def analyze_repository(self, repo_path: str, max_file_size: int = 10485760, 
                         include_patterns: Union[List[str], str] = None, 
                         exclude_patterns: Union[List[str], str] = None,
                         output: str = None) -> dict:
-        """Analyze GitHub repositories for insights and patterns
-        
-        Args:
-            repo_path: Path to local directory or GitHub repository URL
-            max_file_size: Maximum file size in bytes to analyze (default: 10MB)
-            include_patterns: List of glob patterns to include (e.g., ['*.py', '*.js'])
-            exclude_patterns: List of glob patterns to exclude (e.g., ['**/node_modules/**'])
-            output: Optional path to save the analysis results
-            
-        Returns:
-            Dictionary containing repository analysis data
-        """
         try:
-            # Check if repo_path is a URL or local path
-            if repo_path.startswith(('http://', 'https://', 'git@')):
-                # Clone the repository if it's a URL
-                query = {"url": repo_path}
-                print(f"Cloning repository {repo_path} to the active directory...")
-                local_path = self.clone_repository(query)
-                print(f"Repository cloned successfully to {local_path}")
-                repo_path = local_path
             
-            # Use gitingest to analyze the repository with advanced parameters
+            if repo_path.startswith(('http://', 'https://', 'git@')):
+                query = {"url": repo_path}
+                print(f"Cloning repository {repo_path}...")
+                local_path = self.clone_repository(query)
+                print(f"Repository cloned to {local_path}")
+                repo_path = local_path
+
             summary, tree, content = ingest(
                 source=repo_path,
                 max_file_size=max_file_size,
@@ -71,8 +106,8 @@ class BaseAgent:
                 exclude_patterns=exclude_patterns,
                 output=output
             )
-            
-            # Return repository information as a dictionary
+            print(f"tree: {tree}")
+
             return {
                 "summary": summary,
                 "tree": tree,
@@ -81,80 +116,126 @@ class BaseAgent:
                 
 Repository Structure:
 {tree}
-                
+
 Key Content Insights:
 {content}"""
             }
+            
         except Exception as e:
             raise Exception(f"Error analyzing repository: {str(e)}")
-    
+
     def clone_repository(self, query: dict) -> str:
-        """Clone a repository from a URL to the current working directory
-        
-        Args:
-            query: Dictionary containing repository URL and optional parameters
-                  Example: {"url": "https://github.com/username/repo"}
-            
-        Returns:
-            Path to the cloned repository
-        """
         try:
-            # Use gitingest to clone the repository
-            # Since we want to work with the repository, we'll clone it to the current directory
             import asyncio
-            local_path = asyncio.run(clone_repo(query))
-            return local_path
+            return asyncio.run(clone_repo(query))
         except Exception as e:
             raise Exception(f"Error cloning repository: {str(e)}")
-    
+
     def analyze_from_query(self, query: dict) -> Dict:
-        """Analyze a repository based on a query
-        
-        Args:
-            query: Dictionary containing query parameters
-                  Example: {
-                      "source": "path/to/repo",
-                      "max_file_size": 10485760,
-                      "from_web": False,
-                      "include_patterns": ["*.py", "*.js"],
-                      "ignore_patterns": ["**/node_modules/**"]
-                  }
-            
-        Returns:
-            Dictionary containing analysis results
-        """
         try:
-            # Use gitingest to analyze the repository from query
-            result = ingest_from_query(query)
-            return result
+            return ingest_from_query(query)
         except Exception as e:
             raise Exception(f"Error analyzing repository from query: {str(e)}")
-    
+
     def parse_repository_query(self, source: str, max_file_size: int = 10485760, 
                              from_web: bool = False,
                              include_patterns: Union[List[str], str] = None, 
                              ignore_patterns: Union[List[str], str] = None) -> dict:
-        """Parse a repository query
-        
-        Args:
-            source: Path to local directory or GitHub repository URL
-            max_file_size: Maximum file size in bytes to analyze
-            from_web: Whether the source is from the web
-            include_patterns: List of glob patterns to include
-            ignore_patterns: List of glob patterns to ignore
-            
-        Returns:
-            Dictionary containing parsed query
-        """
         try:
-            # Use gitingest to parse the query
-            query = parse_query(
+            return parse_query(
                 source=source,
                 max_file_size=max_file_size,
                 from_web=from_web,
                 include_patterns=include_patterns,
                 ignore_patterns=ignore_patterns
             )
-            return query
         except Exception as e:
             raise Exception(f"Error parsing repository query: {str(e)}")
+        
+    
+    # helper method to moinitor costs and tokens
+    def get_model_cost_per_1k_tokens(self) -> float:
+        """Get the cost per 1k tokens for the current model."""
+        model_name = getattr(self.llm, "model", "").lower()
+
+        # Normalize known aliases
+        if "claude" in model_name:
+            if "sonnet" in model_name:
+                return 0.003  # $0.003 per 1k tokens for Claude Sonnet
+            elif "haiku" in model_name:
+                return 0.00025  # $0.00025 per 1k tokens for Claude Haiku
+            elif "opus" in model_name:
+                return 0.015  # $0.015 per 1k tokens for Claude Opus
+        elif "gemini" in model_name:
+            if "flash" in model_name:
+                return 0.01
+
+        if "gpt-4" in model_name:
+            return 0.01  # $0.01 per 1k tokens (adjust for gpt-4-turbo if needed)
+
+        # Fallback
+        return 0.0
+
+    import csv
+
+
+    def run_llm(self, messages: Union[str, List[Dict[str, str]]]) -> str:
+        """Call the LLM, return response, and track token usage + cost + log to CSV."""
+        try:
+            from langchain_core.messages import HumanMessage
+
+            # Normalize message format
+            if isinstance(messages, str):
+                messages = [HumanMessage(content=messages)]
+
+            # Invoke LLM
+            response = self.llm.invoke(messages)
+
+            # Extract token usage from response metadata
+            usage = response.response_metadata.get("usage", {})
+            input_tokens = usage.get("input_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0)
+            total_tokens = input_tokens + output_tokens
+
+            # Calculate cost
+            cost = (total_tokens / 1000) * self.get_model_cost_per_1k_tokens()
+
+            # Track totals
+            self.total_tokens_used += total_tokens
+            self.total_cost_usd += cost
+            self.budget_usd -= cost
+
+            # Print usage summary
+            print("==============agent monitoring costs and tokens==============")
+            print(f"🔢 Input tokens: {input_tokens}")
+            print(f"🔢 Output tokens: {output_tokens}")
+            print(f"🔢 Total tokens: {total_tokens}")
+            print(f"💰 Cost this call: ${cost:.4f}")
+            print(f"📊 Total cost so far: ${self.total_cost_usd:.4f}")
+            print(f"💼 Remaining budget: ${self.budget_usd:.2f}")
+            print("=============================================================")
+
+            # ✅ Log to CSV
+            csv_path = Path("llm_usage_log.csv")
+            file_exists = csv_path.exists()
+
+            with csv_path.open("a", newline='', encoding="utf-8") as csvfile:
+                writer = csv.writer(csvfile)
+                if not file_exists:
+                    writer.writerow([
+                        "timestamp", "model", "tokens_used", "cost_usd",
+                        "total_cost_usd", "remaining_budget_usd"
+                    ])
+                writer.writerow([
+                    datetime.now().isoformat(timespec="seconds"),
+                    getattr(self.llm, "model", type(self.llm).__name__),
+                    total_tokens,
+                    round(cost, 4),
+                    round(self.total_cost_usd, 4),
+                    round(self.budget_usd, 2)
+                ])
+
+            return response.content if hasattr(response, "content") else str(response)
+
+        except Exception as e:
+            raise Exception(f"Error running LLM: {e}")

@@ -1,3 +1,4 @@
+import shutil
 from typing import Dict, Any, List, Union, Optional, Tuple
 from devops_ai.agents.base_agent import BaseAgent
 import os
@@ -8,11 +9,25 @@ import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 import uuid
 import yaml
+from langchain.output_parsers import StructuredOutputParser, ResponseSchema
+from langchain.output_parsers import RetryOutputParser
+from tempfile import TemporaryDirectory
+from langchain_community.agent_toolkits import FileManagementToolkit
+from langchain_core.tools import tool
+from pydantic import BaseModel
+from langchain_community.agent_toolkits import JsonToolkit, create_json_agent
+from langchain_community.tools.json.tool import JsonSpec
+from pprint import pprint
+from langchain.output_parsers import PydanticOutputParser
+
+
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
+class Finalres(BaseModel):
+    modules: List[str]
+ 
 class InfraSuggestAgent(BaseAgent):
     """Agent for providing infrastructure recommendations including AWS machine types and IAC generation"""
     
@@ -20,78 +35,367 @@ class InfraSuggestAgent(BaseAgent):
         super().__init__()
         self.aws_credentials = None
         # Validate OpenAI API key on initialization
-        self._validate_api_credentials()
+        # self._validate_api_credentials()
         
+    def parse_tree_string_to_dict(self,tree_str: str) -> Dict[str, dict]:
+        """
+        Converts a visual directory tree string (like from `tree`) into a dictionary
+        with relative file paths as keys for easier parsing.
+
+        Example input line:
+            "│   ├── app.py" or "└── frontend/index.html"
+
+        Returns:
+            Dict[str, dict] where keys are relative file paths.
+        """
+        file_paths = {}
+        current_path = []
+
+        for line in tree_str.splitlines():
+            stripped = line.strip("│├└─ ")
+            if not stripped:
+                continue
+
+            # Calculate depth from indentation (each level is approx 4 chars)
+            depth = (len(line) - len(line.lstrip())) // 4
+
+            # Truncate path stack to current depth
+            current_path = current_path[:depth]
+            current_path.append(stripped)
+
+            # If it's a file (contains a dot and not ending with '/'), add it
+            if "." in stripped and not stripped.endswith("/"):
+                rel_path = "/".join(current_path)
+                file_paths[rel_path] = {}
+
+        return file_paths
+
+    
+
+    
     def _analyze_aws_instance_requirements(self, component: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze component requirements and suggest optimal AWS instance type"""
-        prompt = f"""Based on the following component requirements, suggest the optimal AWS EC2 instance type:
+        """
+        Analyze component requirements and recommend optimal AWS EC2 instance
+        with enhanced error handling and tier-based recommendations
+        """
+        
+        # Define tier mappings for quick fallback
+        TIER_MAPPINGS = {
+    # 'basic': {
+    #     'instance_type': 't3.micro',
+    #     'cpu': '1 vCPU',
+    #     'memory': '1 GB',
+    #     'storage': 'gp3 - 20 GB',
+    #     'cost_range': '$8-15/month (instance) + $2-4/month (storage)'
+    # },
+    't3.medium': {
+        'instance_type': 't3.medium',
+        'cpu': '2 vCPU',
+        'memory': '4 GB',
+        'storage': 'gp3 - 50 GB',
+        'cost_range': '$20-25/month (instance) + $4-5/month (storage)'
+    },
+    # 't3.xlarge': {
+    #     'instance_type': 't3.xlarge',
+    #     'cpu': '4 vCPU',
+    #     'memory': '16 GB',
+    #     'storage': 'gp3 - 100 GB',
+    #     'cost_range': '$70-80/month (instance) + $10/month (storage)'
+    # },
+    # 'balanced': {
+    #     'instance_type': 'm5.large',
+    #     'cpu': '2 vCPU',
+    #     'memory': '8 GB',
+    #     'storage': 'gp3 - 100 GB',
+    #     'cost_range': '$70-90/month (instance) + $10-15/month (storage)'
+    # },
+    # 'compute': {
+    #     'instance_type': 'c5.large',
+    #     'cpu': '2 vCPU',
+    #     'memory': '4 GB',
+    #     'storage': 'gp3 - 50 GB',
+    #     'cost_range': '$85-100/month (instance) + $5-8/month (storage)'
+    # },
+    # 'memory': {
+    #     'instance_type': 'r5.large',
+    #     'cpu': '2 vCPU',
+    #     'memory': '16 GB',
+    #     'storage': 'gp3 - 200 GB',
+    #     'cost_range': '$125-150/month (instance) + $20-25/month (storage)'
+    # }
+}
 
-Component: {component.get('component', 'Unknown')}
-Description: {component.get('description', 'No description')}
-CPU Cores: {component.get('cpu_cores', 'Not specified')}
-Memory: {component.get('memory_gb', 'Not specified')} GB
-Storage: {component.get('storage', 'Not specified')}
-Networking: {component.get('networking', 'Not specified')}
-Scaling: {component.get('scaling', 'Not specified')}
+        # Storage type recommendations
+        STORAGE_TYPES = {
+            'gp3': 'General Purpose SSD - Balanced price/performance',
+            # 'gp2': 'General Purpose SSD - Legacy option',
+            # 'io1': 'Provisioned IOPS SSD - High performance',
+            # 'io2': 'Provisioned IOPS SSD - Latest high performance',
+            # 'st1': 'Throughput Optimized HDD - Big data workloads',
+            # 'sc1': 'Cold HDD - Infrequent access',
+            # 'instance_store': 'Temporary high-performance storage'
+        }
+        
+        # Enhanced response schema
+        aws_schema = [
+            ResponseSchema(name="instance_type", description="Recommended EC2 instance type (t3.medium)"),
+            ResponseSchema(name="tier", description="Instance tier category (t3.medium)"),
+            ResponseSchema(name="reasoning", description="Detailed explanation for the recommendation based on workload requirements"),
+            ResponseSchema(name="cost_estimate", description="Estimated monthly cost breakdown for instance and storage"),
+            ResponseSchema(name="storage_recommendation", description="Detailed storage configuration with type, size, and performance"),
+            ResponseSchema(name="alternative_options", description="List of 2-3 alternative instance types with brief pros/cons"),
+        ]
+        
+        parser = StructuredOutputParser.from_response_schemas(aws_schema)
+        retry_parser = RetryOutputParser.from_llm(parser=parser, llm=self.llm)
+        
+        # Extract component details with defaults
+        component_name = component.get('component', 'Unknown Component')
+        description = component.get('description', 'No description provided')
+        cpu_cores = component.get('cpu_cores', 'Not specified')
+        memory_gb = component.get('memory_gb', 'Not specified')
+        storage = component.get('storage', 'Not specified')
+        storage_type = component.get('storage_type', 'Not specified')
+        iops_requirements = component.get('iops_requirements', 'Not specified')
+        networking = component.get('networking', 'Standard')
+        workload_type = component.get('workload_type', 'General purpose')
+        
+        # Determine tier based on requirements
+        predicted_tier = self._determine_instance_tier(cpu_cores, memory_gb, component_name)
+        storage_recommendation = self._determine_storage_type(storage, storage_type, workload_type)
+        
+        prompt = f"""
+        You are an AWS Solutions Architect with expertise in EC2 instance selection and EBS storage optimization. 
+        Analyze the following component requirements and provide a comprehensive recommendation.
+        and use TIER_MAPPINGS:{TIER_MAPPINGS} to determine the best instance type and storage configuration
+        and STORAGE_TYPES:{STORAGE_TYPES} .
 
-Please provide your recommendation in the following JSON format:
-{{
-    "instance_type": "Recommended EC2 instance type",
-    "reasoning": "Explanation for the recommendation",
-    "cost_estimate": "Estimated monthly cost",
-    "performance_characteristics": {{
-        "cpu": "CPU performance characteristics",
-        "memory": "Memory performance characteristics",
-        "network": "Network performance characteristics"
-    }},
-    "alternative_options": [
-        {{
-            "instance_type": "Alternative instance type",
-            "pros": ["List of advantages"],
-            "cons": ["List of disadvantages"]
-        }}
-    ]
-}}
-"""
-        try:
-            response = self.llm.invoke(prompt)
-            response_text = response.content.strip()
-            
-            # Try to extract JSON from potentially markdown-wrapped response
-            # Check if response is wrapped in markdown code blocks
-            if "```json" in response_text:
-                start_idx = response_text.find("```json") + 7
-                end_idx = response_text.rfind("```")
-                if end_idx > start_idx:
-                    response_text = response_text[start_idx:end_idx].strip()
-            elif response_text.startswith("```"):
-                start_idx = response_text.find("```") + 3
-                end_idx = response_text.rfind("```")
-                if end_idx > start_idx:
-                    response_text = response_text[start_idx:end_idx].strip()
-            
+        === COMPONENT REQUIREMENTS ===
+        Component Name: {component_name}
+        Description: {description}
+        Workload Type: {workload_type}
+        
+        === TECHNICAL SPECIFICATIONS ===
+        CPU Cores Required: {cpu_cores}
+        Memory Required: {memory_gb} GB
+        Storage Capacity: {storage}
+        Storage Type Preference: {storage_type}
+        IOPS Requirements: {iops_requirements}
+        Network Performance: {networking}
+        
+        === ANALYSIS CONTEXT ===
+        Predicted Tier: {predicted_tier}
+        Storage Recommendation: {storage_recommendation}
+        
+        === INSTRUCTIONS ===
+        1. SELECT INSTANCE TYPE: Choose the most cost-effective instance that meets requirements from the TIER_MAPPINGS.
+        2. TIER CLASSIFICATION: Use one of: basic,t3.medium,
+        3. STORAGE ANALYSIS: Recommend EBS type (gp3, gp2, io1, io2, st1, sc1) with size and IOPS
+        4. COST ESTIMATION: Provide separate costs for instance and storage (US East-1 pricing)
+        
+        
+        === STORAGE DECISION MATRIX ===
+        - gp3: Best for most workloads (3,000 IOPS baseline, cost-effective)
+       
+        
+        === INSTANCE SELECTION GUIDELINES ===
+        - t3/t4g: Burstable CPU for variable workloads
+        - m5/m6i: Balanced compute for general applications
+        - c5/c6i: CPU-intensive applications
+        - r5/r6i: Memory-intensive applications
+        - x1e/z1d: High-performance specialized workloads
+        
+        === RESPONSE FORMAT ===
+        {parser.get_format_instructions()}
+        
+        Focus on practical, production-ready recommendations with clear cost justifications.
+        """
+        
+        max_retries = 3
+        
+        for attempt in range(max_retries):
             try:
-                recommendation = json.loads(response_text)
-                return recommendation
-            except json.JSONDecodeError as json_err:
-                logger.error(f"JSON decode error: {json_err}. Raw response: {response_text[:100]}...")
-                raise
+                logger.info(f"Analyzing AWS requirements for {component_name} (attempt {attempt + 1})")
                 
-        except Exception as e:
-            logger.error(f"Error analyzing AWS instance requirements: {str(e)}")
-            return {
-                "instance_type": "t3.micro",
-                "reasoning": "Fallback to t3.micro due to analysis error",
-                "cost_estimate": "Unknown",
-                "performance_characteristics": {
-                    "cpu": "1 vCPU",
-                    "memory": "1 GB",
-                    "network": "Low to Moderate"
-                },
-                "alternative_options": []
-            }
+                # Get LLM response
+                response_text = self.run_llm(prompt)
+                
+                # Parse response
+                parsed_result = retry_parser.parse_with_prompt(response_text, prompt)
+                print(f"parsed_result from aws analysis:{parsed_result}")
 
-    def analyze(self, query: str = "", repo_path: str = None, generate_iac: bool = False, deploy: bool = False, iac_format: str = "cloudformation") -> str:
+                
+                # Validate and enhance the response
+                validated_result = self._validate_aws_response(parsed_result, predicted_tier)
+                
+                logger.info(f"Successfully analyzed AWS requirements for {component_name}")
+                return validated_result
+                
+            except Exception as parse_err:
+                logger.warning(f"AWS analysis attempt {attempt + 1} failed: {parse_err}")
+                
+                
+
+    def _determine_instance_tier(self, cpu_cores: Any, memory_gb: Any, component_name: str) -> str:
+        """Determine the appropriate instance tier based on requirements"""
+        
+        try:
+            cpu = int(cpu_cores) if cpu_cores != 'Not specified' else 1
+            memory = int(memory_gb) if memory_gb != 'Not specified' else 1
+        except (ValueError, TypeError):
+            cpu, memory = 1, 1
+        
+        # Check component name for hints
+        component_lower = component_name.lower()
+        
+        # High performance indicators
+        if any(keyword in component_lower for keyword in ['database', 'cache', 'redis', 'elasticsearch']):
+            if memory > 32:
+                return 'high_performance'
+            elif memory > 16:
+                return 'memory'
+        
+        # Compute intensive indicators
+        if any(keyword in component_lower for keyword in ['processing', 'compute', 'batch', 'ml', 'ai']):
+            if cpu > 8:
+                return 'high_performance'
+            elif cpu > 4:
+                return 'compute'
+        
+        # Standard tier determination logic
+        # if cpu <= 1 and memory <= 2:
+        #     return 'basic'
+        if cpu <= 4 and memory <= 16:
+            return 't3.medium'
+        # elif cpu > 4 and memory <= 32:
+        #     return 'compute'
+        # elif memory > 32:
+        #     return 'memory'
+        # else:
+        #     return 'high_performance'
+
+    def _determine_storage_type(self, storage: Any, storage_type: str, workload_type: str) -> str:
+        """Determine optimal storage type based on requirements"""
+        
+        try:
+            storage_size = int(storage.replace('GB', '').replace('TB', '000').strip()) if isinstance(storage, str) else 100
+        except (ValueError, AttributeError):
+            storage_size = 100
+        
+        workload_lower = workload_type.lower()
+        
+        # High IOPS requirements
+        if any(keyword in workload_lower for keyword in ['database', 'oltp', 'high performance']):
+            return 'io2' if storage_size > 1000 else 'io1'
+        
+        # Big data workloads
+        if any(keyword in workload_lower for keyword in ['big data', 'analytics', 'data warehouse']):
+            return 'st1'
+        
+        # Cold storage
+        if any(keyword in workload_lower for keyword in ['backup', 'archive', 'cold']):
+            return 'sc1'
+        
+        # Default to gp3 for most workloads
+        return 'gp3'
+
+    def _validate_aws_response(self, response: Dict[str, Any], predicted_tier: str) -> Dict[str, Any]:
+        """Validate and enhance the AWS response"""
+        
+        # Ensure required fields exist
+        required_fields = ['instance_type', 'reasoning', 'cost_estimate', 'storage_recommendation']
+        
+        for field in required_fields:
+            if field not in response or not response[field]:
+                logger.warning(f"Missing or empty field: {field}")
+                if field == 'storage_recommendation':
+                    response[field] = {
+                        'type': 'gp3',
+                        'size': '100 GB',
+                        'iops': '3000',
+                        'throughput': '125 MB/s'
+                    }
+                else:
+                    response[field] = f"Not specified for {field}"
+        
+        # Add tier if missing
+        if 'tier' not in response:
+            response['tier'] = predicted_tier
+        
+        # Ensure storage_recommendation is properly formatted
+        if not isinstance(response.get('storage_recommendation'), dict):
+            response['storage_recommendation'] = {
+                'type': 'gp3',
+                'size': '100 GB',
+                'iops': '3000',
+                'throughput': '125 MB/s',
+                'cost_per_month': '$10-15'
+            }
+        
+        return response
+
+    def _create_simplified_prompt(self, component: Dict[str, Any], parser) -> str:
+        """Create a simplified prompt for retry attempts"""
+        
+        return f"""
+        AWS EC2 + Storage recommendation for: {component.get('component', 'Application')}
+        
+        Requirements:
+        - CPU: {component.get('cpu_cores', 1)} cores
+        - Memory: {component.get('memory_gb', 1)} GB
+        - Storage: {component.get('storage', '100 GB')}
+        - Workload: {component.get('workload_type', 'General purpose')}
+        
+        Provide:
+        1. EC2 instance type (e.g., t3.medium)
+        2. EBS storage type and size (e.g., gp3, 100 GB)
+        3. Monthly cost estimate
+        4. Brief reasoning
+        
+        Response format:
+        {parser.get_format_instructions()}
+        """
+
+    # def _create_fallback_response(self, tier: str, tier_mappings: Dict[str, Any]) -> Dict[str, Any]:
+    #     """Create a fallback response when all analysis attempts fail"""
+        
+    #     fallback_tier = tier_mappings.get(tier, tier_mappings['basic'])
+        
+    #     return {
+    #         "instance_type": fallback_tier['instance_type'],
+    #         "tier": tier,
+    #         "reasoning": f"Fallback recommendation based on {tier} tier requirements. This is a safe default that should handle most {tier} workloads. Consider manual review for optimization.",
+    #         "cost_estimate": fallback_tier['cost_range'],
+    #         "performance_characteristics": {
+    #             "cpu": fallback_tier['cpu'],
+    #             "memory": fallback_tier['memory'],
+    #             "network": "Up to 5 Gbps" if tier == 'basic' else "Up to 10 Gbps",
+    #             "storage": "EBS optimized available"
+    #         },
+    #         "storage_recommendation": {
+    #             "type": "gp3",
+    #             "size": fallback_tier['storage'].split(' - ')[1],
+    #             "iops": "3000 (baseline)" if 'gp3' in fallback_tier['storage'] else "16000+",
+    #             "throughput": "125 MB/s",
+    #             "cost_per_month": fallback_tier['cost_range'].split(' + ')[1] if ' + ' in fallback_tier['cost_range'] else "$10-15/month"
+    #         },
+    #         "alternative_options": [
+    #             f"Scale up to {tier}_plus for better performance",
+    #             "Consider Reserved Instances for 30-60% cost savings",
+    #             "Evaluate Spot Instances for non-critical workloads"
+    #         ],
+    #     }
+
+
+    
+    def analyze(
+    self,
+    query: str = "",
+    repo_path: str = None,
+    generate_iac: bool = False,
+    deploy: bool = False,
+    iac_format: str = "ansible"
+) -> str:
         """
         Get infrastructure recommendations based on repository context or user query.
         Optionally generate Infrastructure as Code (IAC) and deploy to AWS.
@@ -107,173 +411,190 @@ Please provide your recommendation in the following JSON format:
             str: Infrastructure recommendations in structured format
         """
         try:
-            # Check if API credentials are valid before proceeding
-            import os
-            if not os.getenv("OPENAI_API_KEY"):
-                logger.error("OPENAI_API_KEY environment variable is not set")
-                return self._generate_fallback_response("API Error: OpenAI API key is not set")
-                
-            # Extract repository context if provided
+            # Step 1: Extract repository context if provided
             repo_context = ""
             repo_summary = {}
 
             if repo_path:
-                try:
-                    repo_data = self.analyze_repository(repo_path)
-                    detected_services = self._detect_services_from_repo(repo_data)
-                    repo_summary = {
-                        "structure": repo_data.get("tree", {}),
-                        "key_files": self._extract_key_file_contents(repo_path),
-                        "services": detected_services
-                    }
+               
+                repo_data = self.analyze_repository(repo_path)
+                tree = repo_data.get("tree")
 
-                    repo_context = self._format_repo_context_for_prompt(repo_summary)
-
-                except Exception as e:
-                    logger.warning(f"Failed to extract repository context: {str(e)}")
-
-            # Build prompt for LLM
-            prompt = f"""Based on the following context, provide detailed infrastructure recommendations for ONLY the detected components/services in the repository. 
-DO NOT invent or assume components that are not explicitly mentioned in the detected services list.
-
-{repo_context}
-
-User Query: {query}
-
-Please provide your response in the following JSON format, wrapped in triple backticks:
-```json
-{{
-  "architecture_overview": "High-level architecture description based ONLY on the detected components",
-  "infrastructure_recommendations": [
-    {{
-      "component": "Service/Component name (MUST match one of the detected components)",
-      "description": "What this component does based on repository context",
-      "cpu_cores": "Number of CPU cores needed",
-      "memory_gb": "Memory (RAM) required in GB",
-      "storage": "Storage requirements (e.g., '100GB SSD')",
-      "networking": "Networking needs (e.g., public/private subnet)",
-      "availability_zones": "Number of AZs recommended",
-      "scaling": "Scaling strategy (e.g., auto-scaling group)"
-    }}
-  ],
-  "resource_optimization": "Strategies for optimizing resources",
-  "cost_saving_tips": "Tips to reduce cloud costs",
-  "security_best_practices": "Security hardening recommendations",
-  "deployment_pipeline_suggestions": "CI/CD pipeline recommendations"
-}}
-```
-"""
-            logger.info("Invoking LLM for infrastructure recommendation...")
-            try:
-                # Implement retry logic with exponential backoff
-                max_retries = 3
-                retry_count = 0
-                last_error = None
-                response_text = ""
-                
-                while retry_count < max_retries:
+                if isinstance(tree, str):
                     try:
-                        response = self.llm.invoke(prompt)
-                        response_text = response.content.strip()
-                        break  # Success, exit the retry loop
-                    except Exception as e:
-                        last_error = e
-                        retry_count += 1
-                        logger.warning(f"LLM API call failed (attempt {retry_count}/{max_retries}): {str(e)}")
-                        
-                        if retry_count < max_retries:
-                            # Exponential backoff: wait longer between each retry
-                            import time
-                            wait_time = 2 ** retry_count  # 2, 4, 8 seconds
-                            logger.info(f"Retrying in {wait_time} seconds...")
-                            time.sleep(wait_time)
+                        tree = self.parse_tree_string_to_dict(tree)
+                        repo_data["tree"] = tree  # 👈 update back into the repo_data dict
+                    except json.JSONDecodeError:
+                        raise ValueError("Expected 'tree' to be a dict but got invalid JSON string.")
+
+                print(f"Repository data tree type after parsing: {type(tree)}, {len(tree)} items")
+                logging.info(f"Repository data tree type after parsing: {type(tree)}, {len(tree)} items")
+
+                detected_services = self._detect_services_from_repo(repo_data, tree)
+                print(f"Detected services: {detected_services}")
                 
-                if retry_count == max_retries:
-                    logger.error(f"Failed to invoke LLM after {max_retries} attempts")
-                    return self._generate_fallback_response(f"API Error: Unable to connect to LLM service after {max_retries} attempts")
-            except Exception as api_error:
-                logger.error(f"API error: {str(api_error)}")
-                # Generate a fallback response without using the API
-                return self._generate_fallback_response(f"API Error: {str(api_error)}")
+                
 
-            # Try to extract JSON from markdown
-            json_response = self._extract_json(response_text)
-
-            if not json_response:
-                # Create a fallback response if JSON parsing fails
-                json_response = {
-                    "architecture_overview": "Unable to parse structured response. Raw output:",
-                    "infrastructure_recommendations": [
-                        {
-                            "component": "General Infrastructure",
-                            "description": response_text[:500] + ("..." if len(response_text) > 500 else ""),
-                            "cpu_cores": "Not specified",
-                            "memory_gb": "Not specified",
-                            "storage": "Not specified",
-                            "networking": "Not specified",
-                            "availability_zones": "Not specified",
-                            "scaling": "Not specified"
-                        }
-                    ],
-                    "resource_optimization": "See raw output",
-                    "cost_saving_tips": "See raw output",
-                    "security_best_practices": "See raw output",
-                    "deployment_pipeline_suggestions": "See raw output"
+                repo_summary = {
+                    "structure": repo_data.get("tree"),
+                    "key_files": self._extract_key_file_contents(repo_path),
+                    "services": detected_services
                 }
 
-            # Analyze AWS instance requirements for each component
-            for comp in json_response.get("infrastructure_recommendations", []):
+                repo_context = self._format_repo_context_for_prompt(repo_summary)
+
+                # except Exception as e:
+                #     logger.warning(f"Failed to extract repository context: {str(e)}")
+
+            # Step 2: Define the expected response schema
+            infra_schema = [
+                ResponseSchema(name="architecture_overview", description="High-level architecture description"),
+                ResponseSchema(name="infrastructure_recommendations", description="List of infrastructure recommendations for each detected service/component"),
+                
+            ]
+            # Base parser
+            infra_parser = StructuredOutputParser.from_response_schemas(infra_schema)
+
+            # Wrapped parser with retry capability
+            
+            # Step 3: Build the prompt
+            prompt = f"""
+                You are an expert DevOps architect. Your goal is to recommend a robust cloud infrastructure setup based on the user's repository and application structure.
+
+                === CONTEXT ===
+                {repo_context}
+
+                User Query: {query}
+
+                === TASK ===
+                For each detected service/component, provide detailed infrastructure recommendations in the format below. Each recommendation must include:
+
+                - component: Name of the component (e.g. backend, frontend)
+                - description: Brief description of its function and workload
+              
+                - storage: Estimated storage size in GB (e.g. 50 GB)
+                - storage_type: Preferred EBS type (e.g. gp3, io2)
+                - iops_requirements: Estimated IOPS (e.g. 3000)
+                - networking: Network performance level (e.g. standard, high)
+                - availability_zones: Number or names of AZs to use (e.g. 2, "eu-west-1a,eu-west-1b")
+                - workload_type: One of [general purpose, compute optimized, memory optimized, high throughput, latency sensitive]
+
+                === FORMAT ===
+                {infra_parser.get_format_instructions()}
+
+                Ensure all fields are filled meaningfully. Avoid generic values like "not specified". If a value must be estimated, use the application context.
+                """
+
+
+            logger.info("Invoking LLM for infrastructure recommendation...")
+
+            # Step 4: Call LLM with retry
+   
+                
+            response_text = self.run_llm(prompt)
+            retry_parser = RetryOutputParser.from_llm(parser=infra_parser, llm=self.llm)
+            json_response = retry_parser.parse_with_prompt(response_text, prompt)
+            
+            print(f"json_response from infra :{json_response}")
+            
+              
+            # ✅ Step 5.5: Normalize recommendations list
+            recommendations = json_response.get("infrastructure_recommendations")
+            # Explicit validation before normalizing
+
+
+            if not isinstance(recommendations, list) or not all(isinstance(r, dict) for r in recommendations):
+                print("=======================================================================")
+                print(f"❌ Invalid recommendations:\n{recommendations}")
+                print(f"📦 Type of recommendations: {type(recommendations)}")
+                print("=======================================================================")
+
+                # Try to parse if it's a string that might be JSON
+                if isinstance(recommendations, str):
+                    try:
+                        recommendations = json.loads(recommendations)
+                        print("✅ Successfully parsed string into JSON.")
+
+                        # Recheck after parsing
+                        if not isinstance(recommendations, list) or not all(isinstance(r, dict) for r in recommendations):
+                            raise ValueError("Parsed JSON is still not a valid list of dictionaries.")
+                    except json.JSONDecodeError as e:
+                        print(f"❌ Failed to parse JSON string: {e}")
+                        raise ValueError("Could not parse recommendations from string JSON.") from e
+                else:
+                    raise ValueError("Invalid recommendations format. Expected a list of dictionaries.")
+
+                        
+                
+            # Step 6: Analyze EC2 instance type for each component
+            for comp in json_response["infrastructure_recommendations"]:
                 instance_analysis = self._analyze_aws_instance_requirements(comp)
                 comp["aws_ec2_instance_type"] = instance_analysis["instance_type"]
                 comp["instance_analysis"] = instance_analysis
 
-            # Write report or logs if needed
+            # Step 7: Save infrastructure report
             self._save_infra_recommendation_report(repo_path, json_response)
-            
-            # Generate IAC if requested
+
+            # Step 8: Generate IAC
             iac_output = ""
             if generate_iac:
                 try:
                     if iac_format.lower() == "ansible":
-                        iac_templates = self._generate_ansible_playbooks(json_response)
+                        iac_templates = self._generate_ansible_playbooks(json_response,repo_path)
                         self._save_ansible_playbooks(repo_path, iac_templates)
-                        iac_output = "\n\n=== INFRASTRUCTURE AS CODE GENERATED ===\n"
-                        iac_output += f"Ansible playbooks have been generated in {repo_path}/ansible/\n"
-                    else:  # Default to CloudFormation
+                        iac_output = f"\n\n=== INFRASTRUCTURE AS CODE GENERATED ===\nAnsible playbooks saved to {repo_path}/ansible/"
+                    else:
                         iac_templates = self._generate_cloudformation_templates(json_response)
                         self._save_cloudformation_templates(repo_path, iac_templates)
-                        iac_output = "\n\n=== INFRASTRUCTURE AS CODE GENERATED ===\n"
-                        iac_output += f"CloudFormation templates have been generated in {repo_path}/cloudformation/\n"
+                        iac_output = f"\n\n=== INFRASTRUCTURE AS CODE GENERATED ===\nCloudFormation templates saved to {repo_path}/cloudformation/"
                 except Exception as e:
                     logger.error(f"Error generating IAC: {str(e)}", exc_info=True)
                     iac_output = f"\n\nError generating Infrastructure as Code: {str(e)}"
-            
-            # Deploy to AWS if requested
+
+            # Step 9: Deployment
             deployment_output = ""
             if deploy:
                 if not self.aws_credentials:
                     self._collect_aws_credentials()
-                
+
                 if self.aws_credentials:
                     try:
                         if iac_format.lower() == "ansible":
                             deployment_result = self._deploy_with_ansible(repo_path, json_response)
                         else:
                             deployment_result = self._deploy_to_aws(repo_path, json_response)
-                        deployment_output = "\n\n=== DEPLOYMENT STATUS ===\n"
-                        deployment_output += deployment_result
+                        deployment_output = f"\n\n=== DEPLOYMENT STATUS ===\n{deployment_result}"
                     except Exception as e:
-                        logger.error(f"Error deploying to AWS: {str(e)}", exc_info=True)
+                        logger.error(f"Deployment error: {str(e)}", exc_info=True)
                         deployment_output = f"\n\nError deploying to AWS: {str(e)}"
                 else:
                     deployment_output = "\n\nAWS deployment skipped: No credentials provided."
 
-            # Return formatted output
+            # Step 10: Final output
             return self._format_output(json_response) + iac_output + deployment_output
 
         except Exception as e:
             logger.error(f"Error generating infrastructure suggestion: {str(e)}", exc_info=True)
             return f"Error generating infrastructure suggestions: {str(e)}"
+        
+        
+    def _normalize_component_fields(self, component: Dict[str, Any]) -> Dict[str, Any]:
+        """Ensure all required component fields exist."""
+        defaults = {
+            "component": "Unknown Component",
+            "description": "No description provided",
+            "storage": "Not specified",
+            "storage_type": "Not specified",
+            "iops_requirements": "Not specified",
+            "networking": "Standard",
+            "availability_zones": "Not specified",
+            "workload_type": "General purpose"
+        }
+        for key, value in defaults.items():
+            component.setdefault(key, value)
+        return component
+
+
 
     def _extract_key_file_contents(self, repo_path: str, max_files: int = 5, max_chars: int = 2000) -> Dict[str, str]:
         """Extract content from key files for LLM context"""
@@ -296,17 +617,16 @@ Please provide your response in the following JSON format, wrapped in triple bac
                     file_contents[fname] = f"[ERROR reading file: {e}]"
         return file_contents
 
-    def _detect_services_from_repo(self, repo_data: dict) -> List[Dict[str, Any]]:
+    def _detect_services_from_repo(self, repo_data: dict, tree: dict) -> List[Dict[str, Any]]:
         """Try to detect services/components from repository structure with detailed information"""
         services = []
         service_names = set()
         
-        # Get repository tree
-        tree = repo_data.get("tree", {})
         
         # 1. Detect services from Dockerfiles
         for path in tree.keys():
-            if "dockerfile" in path.lower() or path.lower().endswith(".dockerfile"):
+            if "dockerfile" in path.lower() or path.lower().endswith(".dockerfile") or path.lower().startswith("dockerfile"):
+                print(f"Found Dockerfile at: {path}")
                 # Extract service name from Dockerfile.service_name pattern
                 parts = os.path.basename(path).split('.')
                 if len(parts) > 1 and parts[0].lower() == "dockerfile":
@@ -343,7 +663,7 @@ Please provide your response in the following JSON format, wrapped in triple bac
                                 if svc_name not in service_names:
                                     service_names.add(svc_name)
                                     # Extract more details if available
-                                    description = f"Service defined in docker-compose.yml"
+                                    description = "Service defined in docker-compose.yml"
                                     if "image" in svc_config:
                                         description += f", using image {svc_config['image']}"
                                     
@@ -374,7 +694,7 @@ Please provide your response in the following JSON format, wrapped in triple bac
                 service_names.add(svc_dir)
                 services.append({
                     "component": svc_dir,
-                    "description": f"Service identified from directory structure",
+                    "description": "Service identified from directory structure",
                     "source": "directory"
                 })
         
@@ -432,48 +752,6 @@ Please provide your response in the following JSON format, wrapped in triple bac
 
         return context
 
-    def _extract_json(self, text: str) -> Union[Dict, None]:
-        """Extract JSON from potentially markdown-wrapped response"""
-        # Try to extract JSON from markdown code block
-        start_idx = text.find("```json")
-        if start_idx != -1:
-            end_idx = text.rfind("```")
-            if end_idx > start_idx:
-                json_str = text[start_idx + 7:end_idx].strip()
-                try:
-                    return json.loads(json_str)
-                except json.JSONDecodeError as e:
-                    logger.error(f"JSON decode error in code block: {e}")
-                    # Don't return None yet, try other methods
-        
-        # Try to extract JSON without markdown wrapper
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            # If all JSON parsing fails, create a fallback JSON structure
-            logger.warning("Failed to parse JSON from LLM response, using fallback structure")
-            
-            # Create a fallback structure with the raw text
-            return {
-                "architecture_overview": "Unable to parse structured response. Raw output:",
-                "infrastructure_recommendations": [
-                    {
-                        "component": "General Infrastructure",
-                        "description": text[:500] + ("..." if len(text) > 500 else ""),
-                        "aws_ec2_instance_type": "Not specified",
-                        "cpu_cores": "Not specified",
-                        "memory_gb": "Not specified",
-                        "storage": "Not specified",
-                        "networking": "Not specified",
-                        "availability_zones": "Not specified",
-                        "scaling": "Not specified"
-                    }
-                ],
-                "resource_optimization": "See raw output",
-                "cost_saving_tips": "See raw output",
-                "security_best_practices": "See raw output",
-                "deployment_pipeline_suggestions": "See raw output"
-            }
 
     def _save_infra_recommendation_report(self, repo_path: str, report: dict):
         """Save infrastructure recommendation as JSON file"""
@@ -486,28 +764,7 @@ Please provide your response in the following JSON format, wrapped in triple bac
             except Exception as e:
                 logger.warning(f"Failed to save infrastructure report: {str(e)}")
 
-    def _validate_api_credentials(self):
-        """Validate OpenAI API key and other credentials"""
-        import os
-        from openai import OpenAI
-        
-        # Check if OpenAI API key is set
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            logger.warning("OPENAI_API_KEY environment variable is not set")
-            return False
-            
-        # Try a simple API call to validate the key
-        try:
-            # Create a minimal client for validation only
-            client = OpenAI(api_key=api_key)
-            # Make a minimal API call to check if the key is valid
-            models = client.models.list()  # Remove the limit parameter
-            logger.info("OpenAI API credentials validated successfully")
-            return True
-        except Exception as e:
-            logger.warning(f"OpenAI API key validation failed: {str(e)}")
-            return False
+    
     
     def _generate_fallback_response(self, error_message: str) -> str:
         """Generate a fallback response when LLM API call fails"""
@@ -538,10 +795,10 @@ Please provide your response in the following JSON format, wrapped in triple bac
                     "scaling": "Multi-AZ deployment"
                 }
             ],
-            "resource_optimization": "Use reserved instances for predictable workloads. Implement auto-scaling for variable loads.",
-            "cost_saving_tips": "Consider using Spot instances for non-critical workloads. Implement lifecycle policies for EBS volumes.",
-            "security_best_practices": "Use security groups to restrict access. Enable encryption for data at rest and in transit.",
-            "deployment_pipeline_suggestions": "Implement CI/CD pipeline with AWS CodePipeline or GitHub Actions."
+            # "resource_optimization": "Use reserved instances for predictable workloads. Implement auto-scaling for variable loads.",
+            # "cost_saving_tips": "Consider using Spot instances for non-critical workloads. Implement lifecycle policies for EBS volumes.",
+            # "security_best_practices": "Use security groups to restrict access. Enable encryption for data at rest and in transit.",
+            # "deployment_pipeline_suggestions": "Implement CI/CD pipeline with AWS CodePipeline or GitHub Actions."
         }
         
         # Format and return the fallback response
@@ -559,22 +816,9 @@ Please provide your response in the following JSON format, wrapped in triple bac
         for comp in result.get("infrastructure_recommendations", []):
             output += f"- {comp['component']} ({comp['aws_ec2_instance_type']}):\n"
             output += f"  Description: {comp['description']}\n"
-            output += f"  CPU: {comp['cpu_cores']} cores, Memory: {comp['memory_gb']} GB\n"
             output += f"  Storage: {comp['storage']}\n"
             output += f"  Networking: {comp['networking']}\n"
-            output += f"  Scaling: {comp['scaling']}\n\n"
-
-        output += "Resource Optimization:\n"
-        output += result.get("resource_optimization", "") + "\n\n"
-
-        output += "Cost Saving Tips:\n"
-        output += result.get("cost_saving_tips", "") + "\n\n"
-
-        output += "Security Best Practices:\n"
-        output += result.get("security_best_practices", "") + "\n\n"
-
-        output += "Deployment Pipeline Suggestions:\n"
-        output += result.get("deployment_pipeline_suggestions", "")
+            
 
         return output
         
@@ -600,13 +844,11 @@ Infrastructure Components:
             prompt += f"""
 - Component: {comp.get('component', 'Unknown')}
   Description: {comp.get('description', 'No description')}
-  EC2 Instance Type: {comp.get('aws_ec2_instance_type', 't3.micro')}
-  CPU: {comp.get('cpu_cores', 'Not specified')} cores
-  Memory: {comp.get('memory_gb', 'Not specified')} GB
+  EC2 Instance Type: {comp.get('aws_ec2_instance_type',)}
   Storage: {comp.get('storage', 'Not specified')}
   Networking: {comp.get('networking', 'Not specified')}
   Availability Zones: {comp.get('availability_zones', 'Not specified')}
-  Scaling Strategy: {comp.get('scaling', 'Not specified')}
+ 
 """
         
         # Add instructions for generating the CloudFormation template
@@ -628,9 +870,11 @@ Provide ONLY the CloudFormation template JSON without any explanations or markdo
         logger.info("Invoking LLM to generate CloudFormation template...")
         try:
             # Invoke LLM to generate the CloudFormation template
-            response = self.llm.invoke(prompt)
-            template_text = response.content.strip()
-            
+            # response = self.llm.invoke(prompt)
+            #template_text = response.content.strip()
+            response_text = self.run_llm(prompt)
+            template_text = response_text.strip()
+
             # Try to parse the response as JSON
             try:
                 # Extract JSON if it's wrapped in code blocks
@@ -653,21 +897,20 @@ Provide ONLY the CloudFormation template JSON without any explanations or markdo
                         component_prompt = f"""Generate a CloudFormation template for just the {comp['component']} component with these specifications:
                         
 - Description: {comp.get('description', 'No description')}
-- EC2 Instance Type: {comp.get('aws_ec2_instance_type', 't3.micro')}
-- CPU: {comp.get('cpu_cores', 'Not specified')} cores
-- Memory: {comp.get('memory_gb', 'Not specified')} GB
+- EC2 Instance Type: {comp.get('aws_ec2_instance_type')}
 - Storage: {comp.get('storage', 'Not specified')}
 - Networking: {comp.get('networking', 'Not specified')}
 - Availability Zones: {comp.get('availability_zones', 'Not specified')}
-- Scaling Strategy: {comp.get('scaling', 'Not specified')}
+
 
 Provide ONLY the CloudFormation template JSON without any explanations or markdown formatting.
 """
                         
                         # Only generate component templates for the first few components to avoid excessive API calls
                         if idx < 3:  # Limit to 3 component-specific templates
-                            component_response = self.llm.invoke(component_prompt)
-                            component_template = component_response.content.strip()
+                            component_template=self.run_llm(prompt).strip()  
+                            # component_response = self.llm.invoke(component_prompt)
+                            # component_template = component_response.content.strip()
                             
                             # Extract JSON if wrapped in code blocks
                             if component_template.startswith("```") and component_template.endswith("```"):
@@ -691,131 +934,131 @@ Provide ONLY the CloudFormation template JSON without any explanations or markdo
         except Exception as e:
             logger.error(f"Error generating CloudFormation template with LLM: {str(e)}")
             # Create a fallback template if LLM invocation fails
-            fallback_template = self._create_fallback_template(infra_recommendations)
-            templates["main-stack.json"] = json.dumps(fallback_template, indent=2)
+            # fallback_template = self._create_fallback_template(infra_recommendations)
+            # templates["main-stack.json"] = json.dumps(fallback_template, indent=2)
         
         return templates
         
-    def _create_fallback_template(self, infra_recommendations: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a fallback CloudFormation template if LLM generation fails"""
-        # Basic template structure
-        template = {
-            "AWSTemplateFormatVersion": "2010-09-09",
-            "Description": "Fallback CloudFormation template generated from infrastructure recommendations",
-            "Parameters": {
-                "EnvironmentName": {
-                    "Description": "Environment name (e.g., dev, test, prod)",
-                    "Type": "String",
-                    "Default": "dev"
-                },
-                "VpcCIDR": {
-                    "Description": "CIDR block for the VPC",
-                    "Type": "String",
-                    "Default": "10.0.0.0/16"
-                }
-            },
-            "Resources": {
-                "VPC": {
-                    "Type": "AWS::EC2::VPC",
-                    "Properties": {
-                        "CidrBlock": {"Ref": "VpcCIDR"},
-                        "EnableDnsSupport": True,
-                        "EnableDnsHostnames": True,
-                        "Tags": [{"Key": "Name", "Value": {"Fn::Sub": "${EnvironmentName}-vpc"}}]
-                    }
-                },
-                "PublicSubnet1": {
-                    "Type": "AWS::EC2::Subnet",
-                    "Properties": {
-                        "VpcId": {"Ref": "VPC"},
-                        "CidrBlock": {"Fn::Select": [0, {"Fn::Cidr": [{"Ref": "VpcCIDR"}, 4, 8]}]},
-                        "AvailabilityZone": {"Fn::Select": [0, {"Fn::GetAZs": ""}]},
-                        "Tags": [{"Key": "Name", "Value": {"Fn::Sub": "${EnvironmentName}-public-subnet-1"}}]
-                    }
-                }
-            },
-            "Outputs": {
-                "VpcId": {
-                    "Description": "VPC ID",
-                    "Value": {"Ref": "VPC"},
-                    "Export": {"Name": {"Fn::Sub": "${EnvironmentName}-VpcId"}}
-                }
-            }
-        }
+    # def _create_fallback_template(self, infra_recommendations: Dict[str, Any]) -> Dict[str, Any]:
+    #     """Create a fallback CloudFormation template if LLM generation fails"""
+    #     # Basic template structure
+    #     template = {
+    #         "AWSTemplateFormatVersion": "2010-09-09",
+    #         "Description": "Fallback CloudFormation template generated from infrastructure recommendations",
+    #         "Parameters": {
+    #             "EnvironmentName": {
+    #                 "Description": "Environment name (e.g., dev, test, prod)",
+    #                 "Type": "String",
+    #                 "Default": "dev"
+    #             },
+    #             "VpcCIDR": {
+    #                 "Description": "CIDR block for the VPC",
+    #                 "Type": "String",
+    #                 "Default": "10.0.0.0/16"
+    #             }
+    #         },
+    #         "Resources": {
+    #             "VPC": {
+    #                 "Type": "AWS::EC2::VPC",
+    #                 "Properties": {
+    #                     "CidrBlock": {"Ref": "VpcCIDR"},
+    #                     "EnableDnsSupport": True,
+    #                     "EnableDnsHostnames": True,
+    #                     "Tags": [{"Key": "Name", "Value": {"Fn::Sub": "${EnvironmentName}-vpc"}}]
+    #                 }
+    #             },
+    #             "PublicSubnet1": {
+    #                 "Type": "AWS::EC2::Subnet",
+    #                 "Properties": {
+    #                     "VpcId": {"Ref": "VPC"},
+    #                     "CidrBlock": {"Fn::Select": [0, {"Fn::Cidr": [{"Ref": "VpcCIDR"}, 4, 8]}]},
+    #                     "AvailabilityZone": {"Fn::Select": [0, {"Fn::GetAZs": ""}]},
+    #                     "Tags": [{"Key": "Name", "Value": {"Fn::Sub": "${EnvironmentName}-public-subnet-1"}}]
+    #                 }
+    #             }
+    #         },
+    #         "Outputs": {
+    #             "VpcId": {
+    #                 "Description": "VPC ID",
+    #                 "Value": {"Ref": "VPC"},
+    #                 "Export": {"Name": {"Fn::Sub": "${EnvironmentName}-VpcId"}}
+    #             }
+    #         }
+    #     }
         
-        # Add resources for each component in the recommendations
-        for idx, comp in enumerate(infra_recommendations.get("infrastructure_recommendations", [])):
-            component_name = comp["component"].replace(" ", "")
-            instance_type = comp["aws_ec2_instance_type"]
+    #     # Add resources for each component in the recommendations
+    #     for idx, comp in enumerate(infra_recommendations.get("infrastructure_recommendations", [])):
+    #         component_name = comp["component"].replace(" ", "")
+    #         instance_type = comp["aws_ec2_instance_type"]
             
-            # Add security group for the component
-            sg_name = f"{component_name}SecurityGroup"
-            template["Resources"][sg_name] = {
-                "Type": "AWS::EC2::SecurityGroup",
-                "Properties": {
-                    "GroupDescription": f"Security group for {comp['component']}",
-                    "VpcId": {"Ref": "VPC"},
-                    "SecurityGroupIngress": [
-                        {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "0.0.0.0/0"}
-                    ],
-                    "Tags": [{"Key": "Name", "Value": {"Fn::Sub": f"${{EnvironmentName}}-{component_name}-sg"}}]
-                }
-            }
+    #         # Add security group for the component
+    #         sg_name = f"{component_name}SecurityGroup"
+    #         template["Resources"][sg_name] = {
+    #             "Type": "AWS::EC2::SecurityGroup",
+    #             "Properties": {
+    #                 "GroupDescription": f"Security group for {comp['component']}",
+    #                 "VpcId": {"Ref": "VPC"},
+    #                 "SecurityGroupIngress": [
+    #                     {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "0.0.0.0/0"}
+    #                 ],
+    #                 "Tags": [{"Key": "Name", "Value": {"Fn::Sub": f"${{EnvironmentName}}-{component_name}-sg"}}]
+    #             }
+    #         }
             
-            # Add EC2 instance or Auto Scaling Group based on scaling strategy
-            if "auto" in comp.get("scaling", "").lower():
-                # Create Launch Template
-                lt_name = f"{component_name}LaunchTemplate"
-                template["Resources"][lt_name] = {
-                    "Type": "AWS::EC2::LaunchTemplate",
-                    "Properties": {
-                        "LaunchTemplateName": {"Fn::Sub": f"${{EnvironmentName}}-{component_name}-lt"},
-                        "VersionDescription": "Initial version",
-                        "LaunchTemplateData": {
-                            "InstanceType": instance_type,
-                            "SecurityGroupIds": [{"Ref": sg_name}],
-                            "ImageId": "ami-0c55b159cbfafe1f0",
-                            "UserData": {"Fn::Base64": {"Fn::Sub": f"#!/bin/bash\necho 'Setting up {comp['component']}'\n"}}
-                        }
-                    }
-                }
+    #         # Add EC2 instance or Auto Scaling Group based on scaling strategy
+    #         if "auto" in comp.get("scaling", "").lower():
+    #             # Create Launch Template
+    #             lt_name = f"{component_name}LaunchTemplate"
+    #             template["Resources"][lt_name] = {
+    #                 "Type": "AWS::EC2::LaunchTemplate",
+    #                 "Properties": {
+    #                     "LaunchTemplateName": {"Fn::Sub": f"${{EnvironmentName}}-{component_name}-lt"},
+    #                     "VersionDescription": "Initial version",
+    #                     "LaunchTemplateData": {
+    #                         "InstanceType": instance_type,
+    #                         "SecurityGroupIds": [{"Ref": sg_name}],
+    #                         "ImageId": "ami-0c55b159cbfafe1f0",
+    #                         "UserData": {"Fn::Base64": {"Fn::Sub": f"#!/bin/bash\necho 'Setting up {comp['component']}'\n"}}
+    #                     }
+    #                 }
+    #             }
                 
-                # Create Auto Scaling Group
-                asg_name = f"{component_name}ASG"
-                template["Resources"][asg_name] = {
-                    "Type": "AWS::AutoScaling::AutoScalingGroup",
-                    "Properties": {
-                        "AutoScalingGroupName": {"Fn::Sub": f"${{EnvironmentName}}-{component_name}-asg"},
-                        "LaunchTemplate": {
-                            "LaunchTemplateId": {"Ref": lt_name},
-                            "Version": {"Fn::GetAtt": [lt_name, "LatestVersionNumber"]}
-                        },
-                        "MinSize": 1,
-                        "MaxSize": 3,
-                        "DesiredCapacity": 2,
-                        "VPCZoneIdentifier": [{"Ref": "PublicSubnet1"}],
-                        "Tags": [{
-                            "Key": "Name",
-                            "Value": {"Fn::Sub": f"${{EnvironmentName}}-{component_name}"},
-                            "PropagateAtLaunch": True
-                        }]
-                    }
-                }
-            else:
-                # Create EC2 instance
-                ec2_name = f"{component_name}Instance"
-                template["Resources"][ec2_name] = {
-                    "Type": "AWS::EC2::Instance",
-                    "Properties": {
-                        "InstanceType": instance_type,
-                        "SecurityGroupIds": [{"Ref": sg_name}],
-                        "SubnetId": {"Ref": "PublicSubnet1"},
-                        "ImageId": "ami-0c55b159cbfafe1f0",
-                        "Tags": [{"Key": "Name", "Value": {"Fn::Sub": f"${{EnvironmentName}}-{component_name}"}}]
-                    }
-                }
+    #             # Create Auto Scaling Group
+    #             asg_name = f"{component_name}ASG"
+    #             template["Resources"][asg_name] = {
+    #                 "Type": "AWS::AutoScaling::AutoScalingGroup",
+    #                 "Properties": {
+    #                     "AutoScalingGroupName": {"Fn::Sub": f"${{EnvironmentName}}-{component_name}-asg"},
+    #                     "LaunchTemplate": {
+    #                         "LaunchTemplateId": {"Ref": lt_name},
+    #                         "Version": {"Fn::GetAtt": [lt_name, "LatestVersionNumber"]}
+    #                     },
+    #                     "MinSize": 1,
+    #                     "MaxSize": 3,
+    #                     "DesiredCapacity": 2,
+    #                     "VPCZoneIdentifier": [{"Ref": "PublicSubnet1"}],
+    #                     "Tags": [{
+    #                         "Key": "Name",
+    #                         "Value": {"Fn::Sub": f"${{EnvironmentName}}-{component_name}"},
+    #                         "PropagateAtLaunch": True
+    #                     }]
+    #                 }
+    #             }
+    #         else:
+    #             # Create EC2 instance
+    #             ec2_name = f"{component_name}Instance"
+    #             template["Resources"][ec2_name] = {
+    #                 "Type": "AWS::EC2::Instance",
+    #                 "Properties": {
+    #                     "InstanceType": instance_type,
+    #                     "SecurityGroupIds": [{"Ref": sg_name}],
+    #                     "SubnetId": {"Ref": "PublicSubnet1"},
+    #                     "ImageId": "ami-0c55b159cbfafe1f0",
+    #                     "Tags": [{"Key": "Name", "Value": {"Fn::Sub": f"${{EnvironmentName}}-{component_name}"}}]
+    #                 }
+    #             }
         
-        return template
+    #     return template
     
     def _save_cloudformation_templates(self, repo_path: str, templates: Dict[str, str]) -> None:
         """Save CloudFormation templates to the repository"""
@@ -936,352 +1179,392 @@ Provide ONLY the CloudFormation template JSON without any explanations or markdo
         except Exception as e:
             logger.error(f"Deployment error: {str(e)}", exc_info=True)
             return f"Deployment error: {str(e)}"
+        
+    def get_jinja_docker_templates(self,repo_path):
+        jinja_files = []
+        for root, _, files in os.walk(repo_path):
+            for filename in files:
+                if filename.startswith("Dockerfile"):
+                    new_filename = f"{filename}.j2"
+                    jinja_files.append(os.path.join(root, new_filename))
 
-    def _generate_ansible_playbooks(self, infra_recommendations: Dict[str, Any]) -> Dict[str, str]:
+                elif filename.startswith("docker-compose") and filename.endswith(".yml"):
+                    new_filename = filename.replace(".yml", ".j2")
+                    jinja_files.append(os.path.join(root, new_filename))
+
+        return jinja_files
+    
+    def discover_required_modules(self, ansible_role_summary: str):
+        parser = PydanticOutputParser(pydantic_object=Finalres)
+        base_dir = os.path.dirname(__file__)  # This is the directory of the current Python file
+        modules_path = os.path.join(base_dir, "aws", "all_modules.json")
+        params_path = os.path.join(base_dir, "aws", "aws_modules_params.json")
+        returns_path = os.path.join(base_dir, "aws", "aws_modules_returns.json")
+        
+        # Load your JSON data
+        with open(modules_path) as f:
+            data = json.load(f)
+        with open(params_path) as f:
+            data_params = json.load(f)
+        with open(returns_path) as f:
+            data_returns = json.load(f)
+        
+        # Convert list of modules to a dict with name as key
+        data_dict = {entry["name"]: entry for entry in data}
+        
+        # Setup the spec and toolkit
+        json_spec = JsonSpec(dict_=data_dict, max_value_length=4000)
+        json_toolkit = JsonToolkit(spec=json_spec)
+        
+        def count_tokens_approx(text):
+            return int(len(text) / 4)
+        
+        def extract_nested_structure(data_dict):
+            """Recursively extract parameters/returns with their nested suboptions."""
+            result = {}
+            
+            for key, value in data_dict.items():
+                if isinstance(value, dict):
+                    param_info = {
+                        # "type": value.get("type", "unknown"),
+                        # "required": value.get("required", False),
+                        "description":value.get("description", "unknown")
+                    
+                    }
+                    
+                    # Check if this parameter has suboptions
+                    if "suboptions" in value and value["suboptions"]:
+                        param_info["suboptions"] = extract_nested_structure(value["suboptions"])
+                    
+                    result[key] = param_info
+                
+            return result
+        
+        def extract_nested_returns_structure(data_dict):
+            """Recursively extract return values with their nested suboptions."""
+            result = {}
+            
+            for key, value in data_dict.items():
+                if isinstance(value, dict):
+                    return_info = {
+                        "type": value.get("type", "unknown"),
+                    
+                    }
+                    
+                    # Add additional return-specific fields if they exist
+                    if "elements" in value:
+                        return_info["elements"] = value["elements"]
+                    if "sample" in value:
+                        return_info["sample"] = value["sample"]
+                    
+                    # Check if this return value has suboptions
+                    if "suboptions" in value and value["suboptions"]:
+                        return_info["suboptions"] = extract_nested_returns_structure(value["suboptions"])
+                    
+                    result[key] = return_info
+                
+            return result
+        
+        json_agent_executor = create_json_agent(
+            llm=self.llm, toolkit=json_toolkit, verbose=True, handle_parsing_errors=True
+        )
+        
+        # Run the agent and count tokens
+        # Step 1: Add JSON output format instruction to the prompt
+        question = parser.get_format_instructions() + "\n" + ansible_role_summary
+        
+        # Step 2: Invoke agent
+        response = json_agent_executor.invoke({"input": question})
+        
+        # Step 3: Parse output as Pydantic model
+        parsed_output = parser.parse(response['output'])
+        
+        # Step 4: Access params and returns with full nested structure
+        modules_with_params_and_returns = []
+        for module_name in parsed_output.modules:
+            # Extract parameters with nested suboptions
+            module_params = data_params.get(module_name, {}).get("parameters", {})
+            params_structure = extract_nested_structure(module_params)
+            
+            # Extract return values with nested suboptions
+            module_returns = data_returns.get(module_name, {}).get("return_values", {})
+            returns_structure = extract_nested_returns_structure(module_returns)
+            
+            modules_with_params_and_returns.append({
+                "module": module_name,
+                "params": params_structure,
+                "returns": returns_structure
+            })
+        
+        pprint(f"modules_with_params_and_returns: {modules_with_params_and_returns}")
+        return modules_with_params_and_returns
+    
+   
+    
+
+    def format_nested_options(self,options_dict, indent_level=1):
+        """Recursively format nested options without descriptions."""
+        result = ""
+        indent = "    " * indent_level
+        
+        for key, value in options_dict.items():
+            result += f"{indent}- `{key}`"
+            
+            # Add type and required info inline
+            if isinstance(value, dict):
+                type_info = value.get('type', 'unknown')
+                required = value.get('required', False)
+                req_text = " (required)" if required else ""
+                result += f" [{type_info}]{req_text}\n"
+                
+                # If there are suboptions, recursively format them
+                if 'suboptions' in value and value['suboptions']:
+                    result += self.format_nested_options(value['suboptions'], indent_level + 1)
+            else:
+                result += "\n"
+        
+        return result
+                
+
+    def _generate_ansible_playbooks(self, infra_recommendations: Dict[str, Any],repo_path: str) -> Dict[str, str]:
         """Generate Ansible playbooks based on infrastructure recommendations using LLM"""
         # Extract key information from recommendations
         components = infra_recommendations.get("infrastructure_recommendations", [])
         architecture_overview = infra_recommendations.get("architecture_overview", "")
-        
+        templates_names_list=self.get_jinja_docker_templates(repo_path)
+        # Discover required modules
+        ansible_role_summary = (
+            "What are the required Ansible modules used to implement infrastructure provisioning "
+            "on AWS based on these roles: vpc, subnet, internet_gateway, route_table, keypair, "
+            "ec2 provisioning, install_docker, code_setup, docker_template, security_group, database_service."
+        )
+        modules_info = self.discover_required_modules(ansible_role_summary)
+
+        module_param_section = "\n📦 Required Ansible Modules, Parameters, and Return Values:\n"
+        for item in modules_info:
+            module_param_section += f"- `{item['module']}`\n"
+            
+            # Add parameters section
+            if item['params']:
+                module_param_section += "  📥 Parameters:\n"
+                module_param_section += self.format_nested_options(item['params'], indent_level=1)
+            
+            # Add return values section
+            if item['returns']:
+                module_param_section += "  📤 Return Values:\n"
+                module_param_section += self.format_nested_options(item['returns'], indent_level=1)
+            
+            module_param_section += "\n"  # Add spacing between modules
+
+        print("=========================================================================================")
+        print(f"module_param_section:{module_param_section}")
+        print("=========================================================================================")
         # Build prompt for LLM to generate Ansible playbooks
-        prompt = f"""Generate complete Ansible playbooks based on the following infrastructure requirements.
+        prompt = f"""You are an expert DevOps automation assistant.
 
-Architecture Overview:
-{architecture_overview}
+        Generate Ansible playbooks to provision infrastructure and deploy the following application components on a **single AWS EC2 instance** using Docker.
 
-Infrastructure Components:
-"""
+        Architecture Overview:
+        {architecture_overview}
 
-        # Add each component's details to the prompt
+        Infrastructure Components:
+        """
+
+        # Step 2: Dynamically include component descriptions
         for comp in components:
             prompt += f"""
-- Component: {comp.get('component', 'Unknown')}
-  Description: {comp.get('description', 'No description')}
-  EC2 Instance Type: {comp.get('aws_ec2_instance_type', 't3.micro')}
-  CPU: {comp.get('cpu_cores', 'Not specified')} cores
-  Memory: {comp.get('memory_gb', 'Not specified')} GB
-  Storage: {comp.get('storage', 'Not specified')}
-  Networking: {comp.get('networking', 'Not specified')}
-  Availability Zones: {comp.get('availability_zones', 'Not specified')}
-  Scaling Strategy: {comp.get('scaling', 'Not specified')}
-"""
+        - Component: {comp.get('component', 'Unknown')}
+        Description: {comp.get('description', 'No description')}
+        EC2 Instance Type: {comp.get('aws_ec2_instance_type', 'Not specified')}
+        Storage: {comp.get('storage', 'Not specified')}
+        Networking: {comp.get('networking', 'Not specified')}
+        Availability Zones: {comp.get('availability_zones', 'Not specified')}
+        """
+        prompt += module_param_section  # Add module info to the prompt
         
         # Add instructions for generating the Ansible playbooks
-        prompt += """
+        # Step 3: Add instructions
+        prompt += f"""
 
-Please generate the following Ansible playbooks in YAML format:
+        Based on the above, generate **complete Ansible playbooks** in YAML format for deploying the components on a single EC2 instance.
 
-1. A main playbook (main.yml) that includes all component roles
-2. Individual component playbooks for each infrastructure component
-3. An inventory file (inventory.yml) that defines the hosts and groups
+        📌 Required Features:
+        - App Repo: `{repo_path}`  
+            This should be included in `vars.yml` as `app_repo_url`.
+        - Provision one EC2 instance with the specified instance type
+        - Use Docker to run detected components ({"frontend" if any(comp["component"] == "frontend" for comp in components) else ""}{" and " if all(comp["component"] in ["frontend", "backend"] for comp in components) else ""}{"backend" if any(comp["component"] == "backend" for comp in components) else ""})
+        - Configure network (VPC, Subnet, IGW, Security Groups, Route Table)
+        - Setup keypair and SSH access
+        - Install Docker engine
+        - Setup Docker Compose or Dockerfiles for services
+        - Pull app code from GitHub (or allow code to be copied to instance)
+        - (Optional) Prepare a role for DB service do not create if no DB detected, otherwise create a role to set up the database service (e.g., MySQL, PostgreSQL) with Docker
+        - use Ansible modules from amazon.aws to integrate with any other AWS services from the previous list.
+        - Make sure to include only one availability zone.
+            🔧 List of Roles to Generate:
+            - `vpc` — create a VPC,✅ Make sure the `keypair` role handles copying an existing public SSH key (`id_rsa.pub`) to AWS key pair.
+            - `subnet` — Use `aws_subnet` to create the subnet **first** (do NOT use `map_public_ip_on_launch`), then use `ec2_vpc_subnet` to set `map_public: yes`. Never use `map_public_ip_on_launch` — it's not supported.
+            - `security_group` — create security groups for the instance , never add description to the rules .
+            - `internet_gateway`— create an Internet Gateway and attach it to the VPC
+            - `route_table`
+            - `keypair` - use key_material: "{{ lookup('file', key_path) }}"
+            - `ec2_provision`
+                 — launch the EC2 instance and register IP ,use  volume_type: gp3, use ami-014e30c8a36252ae5 , use the EBS settings for volumes such as : volumes:
+                    - device_name: /dev/xvda
+                        ebs:.
+                - After provisioning, add a task to wait for 30 seconds before continuing (to allow the instance to become accessible)
 
-The playbooks should include:
-- Appropriate tasks for provisioning and configuring each component
-- Variables for customization
-- Handlers for service management
-- Tags for selective execution
-- Proper error handling and idempotence
-- Security best practices
+            - `install_docker` — install Docker & Docker Compose make sure in Verify Docker installation to become: yes in order to have the permission ,
+            - `code_setup` — clone app code or copy it to `/opt/app`
+            - `docker_template` — create Docker Compose or Dockerfiles based on detected services
+            - `database_service` — do not create if no DB detected, otherwise create a role to set up the database service (e.g., MySQL, PostgreSQL) with Docker
+            
 
-Provide the playbooks in the following format:
-```yaml
-# [filename.yml]
-# Playbook content here
-```
+            🧠 Role Behavior:
+            - make sure to use vaild and correct key params and modules
+            - If only **backend** is detected → skip frontend setup in Docker role
+            - If only **frontend** is detected → skip backend setup
+            - If **both** are detected → include both in the Docker setup
+            - If **no DB** → include an empty `database_service` role (create folder and files but leave them empty)
+            - If **DB** is detected → create a role to set it up (e.g., MySQL, PostgreSQL) with Docker
+            📌 Important Instructions:
+            - Use `delegate_to` and `add_host` to run roles like `install_docker`, `code_setup`, `docker_template` on the provisioned EC2 instance using its public IP.
+            - Use `add_host` and `wait_for` in `main.yml` to dynamically add the EC2 host to inventory after creation.
+            - Ensure tasks use `ansible_user`, `ansible_ssh_private_key_file`, and the proper `groupname`.
+            - Roles must be modular and reusable.
+            - Use comments inside tasks for clarity.
+            - All services must run inside Docker containers.
 
-For example:
-```yaml
-# main.yml
-- name: Deploy Infrastructure
-  hosts: all
-  become: true
-  roles:
-    - webserver
-    - database
-```
+            - 📁 Generate these Ansible **roles**, each as its **own directory** with:
+            - `roles/ROLE_NAME/tasks/main.yml` → task definitions
+            - `roles/ROLE_NAME/defaults/main.yml` → default variables
+            - Any shared vars should go in `vars.yml`
 
-Ensure the playbooks follow Ansible best practices and are optimized for AWS deployment.
-"""
+            + 📁 For each role, output files in the format:
+            + ```yaml
+            + # roles/ROLE_NAME/tasks/main.yml
+            + ...
+            + ```
+            write just main.yml at root as the top-level playbook
+                - Generate `main.yml` using only the `roles:` section under `hosts: localhost`
+                - Skip `include_role` and per-task entries
+                - Assume all orchestration is handled **inside the roles**
+                includes tasks to:
+                    - use these files {templates_names_list}
+                    - Render a `Dockerfile` from a Jinja2 template and save it. .
+                    - Render a `docker-compose.yml` from `docker-compose.yml.j2` and save it.
+
+            Use the `ansible.builtin.template` module for rendering.
+            Ensure the source files are in the `ansible/templates` directory relative to the repo root.
+            Set file permissions to `0644`.
+            + Use the above format to indicate the file path.
+            + Use these full paths as YAML comment headers for every file you output.
+            + Do NOT merge all content into one file.
+            + Do NOT output only `main.yml`. Every role must have its own correct path header.
+
+
+            ✅ No placeholder comments like “add your logic here” — implement actual working Ansible tasks.
+                    """
 
         logger.info("Invoking LLM to generate Ansible playbooks...")
         try:
-            # Invoke LLM to generate the Ansible playbooks
-            response = self.llm.invoke(prompt)
-            playbooks_text = response.content.strip()
+            playbooks_text = self.run_llm(prompt).strip()
             
             # Parse the response to extract individual playbooks
             playbook_sections = self._extract_playbooks_from_response(playbooks_text)
             
             if not playbook_sections:
                 logger.warning("Failed to extract playbooks from LLM response, using fallback")
-                return self._generate_fallback_ansible_playbooks(infra_recommendations)
+                # return self._generate_fallback_ansible_playbooks(infra_recommendations)
             
             return playbook_sections
             
         except Exception as e:
             logger.error(f"Error generating Ansible playbooks with LLM: {str(e)}")
             # Create fallback playbooks if LLM invocation fails
-            return self._generate_fallback_ansible_playbooks(infra_recommendations)
-    
+            # return self._generate_fallback_ansible_playbooks(infra_recommendations)
+            
     def _extract_playbooks_from_response(self, response_text: str) -> Dict[str, str]:
-        """Extract individual playbooks from LLM response"""
-        playbooks = {}
-        
-        # Look for playbook sections in the format: ```yaml\n# [filename.yml]\n...
+        """Extract individual playbooks or related files from LLM response"""
         import re
-        pattern = r'```(?:yaml)?\s*#\s*\[?([\w\.-]+\.yml)\]?\s*([\s\S]*?)```'
-        matches = re.findall(pattern, response_text)
-        
-        if not matches:
-            # Try alternative pattern without the filename in brackets
-            pattern = r'```(?:yaml)?\s*#\s*([\w\.-]+\.yml)\s*([\s\S]*?)```'
-            matches = re.findall(pattern, response_text)
-        
-        if not matches:
-            # Try another pattern with just the filename as a comment
-            pattern = r'```(?:yaml)?\s*([\w\.-]+\.yml)\s*([\s\S]*?)```'
-            matches = re.findall(pattern, response_text)
-            
-        if not matches:
-            # Last attempt: look for sections with clear filename headers but without code blocks
-            pattern = r'# ([\w\.-]+\.yml)\s*([\s\S]*?)(?=# [\w\.-]+\.yml|$)'
-            matches = re.findall(pattern, response_text)
-        
-        for filename, content in matches:
-            # Clean up the content
-            clean_content = content.strip()
-            # Remove the filename if it appears at the beginning of the content
-            if clean_content.startswith(filename):
-                clean_content = clean_content[len(filename):].strip()
-            
-            playbooks[filename.strip()] = clean_content
-        
-        # If we couldn't extract any playbooks with the patterns, try to parse the whole response
-        if not playbooks and '---' in response_text:
-            # This might be a single YAML document, try to use it as main.yml
-            playbooks['main.yml'] = response_text
-        
-        return playbooks
-    
-    def _generate_fallback_ansible_playbooks(self, infra_recommendations: Dict[str, Any]) -> Dict[str, str]:
-        """Generate fallback Ansible playbooks if LLM generation fails"""
         playbooks = {}
-        
-        # Generate main playbook
-        main_playbook = {
-            "name": "Infrastructure Deployment",
-            "hosts": "all",
-            "become": True,
-            "vars": {
-                "environment": "{{ env | default('dev') }}",
-                "region": "{{ aws_region | default('us-east-1') }}"
-            },
-            "pre_tasks": [
-                {
-                    "name": "Update apt cache",
-                    "apt": {
-                        "update_cache": "yes",
-                        "cache_valid_time": 3600
-                    },
-                    "when": "ansible_os_family == 'Debian'"
-                }
-            ],
-            "roles": []
-        }
-        
-        # Generate component-specific playbooks
-        for comp in infra_recommendations.get("infrastructure_recommendations", []):
-            component_name = comp["component"].replace(" ", "").lower()
-            
-            # Add role to main playbook
-            main_playbook["roles"].append(component_name)
-            
-            # Generate component-specific playbook
-            component_playbook = {
-                "name": f"Deploy {comp['component']}",
-                "hosts": component_name,
-                "become": True,
-                "vars": {
-                    "instance_type": comp.get("aws_ec2_instance_type", "t3.micro"),
-                    "cpu_cores": comp.get("cpu_cores", "1"),
-                    "memory_gb": comp.get("memory_gb", "1"),
-                    "storage": comp.get("storage", "20GB"),
-                    "scaling": comp.get("scaling", "single")
-                },
-                "tasks": [
-                    {
-                        "name": "Install required packages",
-                        "package": {
-                            "name": "{{ item }}",
-                            "state": "present"
-                        },
-                        "loop": [
-                            "python3",
-                            "python3-pip",
-                            "git",
-                            "docker.io"
-                        ]
-                    },
-                    {
-                        "name": "Configure system resources",
-                        "block": [
-                            {
-                                "name": "Set CPU governor",
-                                "command": "echo performance > /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor",
-                                "when": "ansible_os_family == 'Linux'"
-                            },
-                            {
-                                "name": "Configure swap space",
-                                "command": "dd if=/dev/zero of=/swapfile bs=1M count={{ memory_gb * 1024 }} && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile",
-                                "when": "ansible_os_family == 'Linux'"
-                            }
-                        ]
-                    },
-                    {
-                        "name": "Setup application directory",
-                        "file": {
-                            "path": "/opt/{{ component_name }}",
-                            "state": "directory",
-                            "mode": "0755"
-                        }
-                    }
-                ]
-            }
-            
-            # Add scaling configuration if needed
-            if "auto" in comp.get("scaling", "").lower():
-                component_playbook["tasks"].extend([
-                    {
-                        "name": "Install AWS CLI",
-                        "pip": {
-                            "name": "awscli",
-                            "state": "present"
-                        }
-                    },
-                    {
-                        "name": "Configure auto-scaling",
-                        "template": {
-                            "src": "templates/autoscaling.conf.j2",
-                            "dest": "/etc/{{ component_name }}/autoscaling.conf",
-                            "mode": "0644"
-                        }
-                    }
-                ])
-            
-            # Store component playbook
-            playbooks[f"{component_name}.yml"] = yaml.dump(component_playbook, default_flow_style=False)
-        
-        # Store main playbook
-        playbooks["main.yml"] = yaml.dump(main_playbook, default_flow_style=False)
-        
-        # Generate inventory template
-        inventory = {
-            "all": {
-                "children": {
-                    "aws": {
-                        "hosts": {},
-                        "vars": {
-                            "ansible_python_interpreter": "/usr/bin/python3",
-                            "ansible_ssh_private_key_file": "~/.ssh/aws_key.pem"
-                        }
-                    }
-                }
-            }
-        }
-        
-        # Add component hosts to inventory
-        for comp in infra_recommendations.get("infrastructure_recommendations", []):
-            component_name = comp["component"].replace(" ", "").lower()
-            instance_type = comp.get("aws_ec2_instance_type", "t3.micro")
-            inventory["all"]["children"]["aws"]["hosts"][f"{component_name}-{{{{ env }}}}"] = {
-                "ansible_host": f"{{{{ lookup('aws_ec2', 'instance_type={instance_type}') }}}}"
-            }
-        
-        playbooks["inventory.yml"] = yaml.dump(inventory, default_flow_style=False)
-        
+
+        pattern = r'```(?:yaml|yml|jinja2)?\s*#\s*(roles/[\w\-_]+/[\w\-/]+\.(?:ya?ml|j2)|[\w\-_]+\.(?:ya?ml|j2))\s*\n([\s\S]*?)```'
+        matches = re.findall(pattern, response_text)
+
+        if not matches:
+            print("⚠️ No matches found in LLM response.")
+            return {}
+
+        for filename, content in matches:
+            clean_content = content.strip()
+            playbooks[filename.strip()] = clean_content
+
         return playbooks
 
-    def _save_ansible_playbooks(self, repo_path: str, playbooks: Dict[str, str]) -> None:
-        """Save Ansible playbooks to the repository"""
-        if not repo_path or not os.path.isdir(repo_path):
-            logger.warning("No valid repository path provided for saving Ansible playbooks")
-            return
-            
-        # Create ansible directory structure
-        ansible_dir = os.path.join(repo_path, "ansible")
-        roles_dir = os.path.join(ansible_dir, "roles")
-        templates_dir = os.path.join(ansible_dir, "templates")
-        
-        os.makedirs(ansible_dir, exist_ok=True)
-        os.makedirs(roles_dir, exist_ok=True)
-        os.makedirs(templates_dir, exist_ok=True)
-        
-        # Save main playbook and inventory
-        for playbook_name, content in playbooks.items():
-            if playbook_name in ["main.yml", "inventory.yml"]:
-                playbook_path = os.path.join(ansible_dir, playbook_name)
-                try:
-                    with open(playbook_path, "w", encoding="utf-8") as f:
-                        f.write(content)
-                    logger.info(f"Saved Ansible playbook to {playbook_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to save Ansible playbook {playbook_name}: {str(e)}")
-        
-        # Save component playbooks in their respective role directories
-        for playbook_name, content in playbooks.items():
-            if playbook_name not in ["main.yml", "inventory.yml"]:
-                component_name = playbook_name.replace(".yml", "")
-                role_dir = os.path.join(roles_dir, component_name)
-                tasks_dir = os.path.join(role_dir, "tasks")
-                
-                os.makedirs(role_dir, exist_ok=True)
-                os.makedirs(tasks_dir, exist_ok=True)
-                
-                playbook_path = os.path.join(tasks_dir, "main.yml")
-                try:
-                    with open(playbook_path, "w", encoding="utf-8") as f:
-                        f.write(content)
-                    logger.info(f"Saved component playbook to {playbook_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to save component playbook {playbook_name}: {str(e)}")
 
-    def _deploy_with_ansible(self, repo_path: str, infra_recommendations: Dict[str, Any]) -> str:
-        """Deploy infrastructure using Ansible"""
-        if not self.aws_credentials:
-            return "Error: AWS credentials not available. Please provide credentials first."
-        
-        try:
-            # Generate playbooks if they don't exist
-            ansible_dir = os.path.join(repo_path, "ansible")
-            if not os.path.exists(os.path.join(ansible_dir, "main.yml")):
-                playbooks = self._generate_ansible_playbooks(infra_recommendations)
-                self._save_ansible_playbooks(repo_path, playbooks)
+    
+    
+    
+
+    
+
+    def _save_ansible_playbooks(self, repo_path: str, playbooks: Dict[str, str]):
+        """Save Ansible playbooks using LangChain FileManagementToolkit tools."""
+        if not repo_path or not os.path.isdir(repo_path):
+            print("⚠️ Invalid repo path")
+            return
+
+        # Initialize toolkit with selected tools
+        toolkit = FileManagementToolkit(
+            root_dir=repo_path,
+            selected_tools=["write_file", "list_directory", "read_file"]
+        )
+        tools = toolkit.get_tools()
+
+        write_tool = next(t for t in tools if t.name == "write_file")
+
+        # Create required directories
+        for sub_dir in ["ansible", "ansible/templates"]:
+            os.makedirs(os.path.join(repo_path, sub_dir), exist_ok=True)
+
+        # Write playbook files
+        for playbook_name, content in playbooks.items():
+            # Properly construct the file path
+            file_path = os.path.join("ansible", playbook_name)
+
+            # Ensure directory exists
+            full_dir = os.path.dirname(os.path.join(repo_path, file_path))
+            os.makedirs(full_dir, exist_ok=True)
+
+            # Save the file
+            result = write_tool.invoke({
+                "file_path": file_path,
+                "text": content
+            })
+
+
+            print(f"✅ Wrote: {file_path} – {result}")
+
+        # ✅ Copy any Docker-related files to templates/ with .j2 extension
+        for fname in os.listdir(repo_path):
+            if fname.lower().startswith("dockerfile") or fname.lower().startswith("docker-compose"):
+                src_path = os.path.join(repo_path, fname)
+                if os.path.isfile(src_path):
+                    new_name = fname
+                    if new_name.endswith(".yml") or new_name.endswith(".yaml"):
+                        new_name = new_name.rsplit(".", 1)[0] + ".j2"
+                    else:
+                        new_name += ".j2"
+                    dest_path = os.path.join(repo_path, "ansible", "templates", new_name)
+                    shutil.copyfile(src_path, dest_path)
+                    print(f"📄 Copied {fname} ➝ templates/{new_name}")
+
+
+
+    
+
+
             
-            # Create ansible.cfg
-            ansible_cfg = """[defaults]
-inventory = inventory.yml
-remote_user = ubuntu
-private_key_file = ~/.ssh/aws_key.pem
-host_key_checking = False
-"""
+
             
-            with open(os.path.join(ansible_dir, "ansible.cfg"), "w") as f:
-                f.write(ansible_cfg)
-            
-            # Run ansible-playbook
-            import subprocess
-            result = subprocess.run(
-                ["ansible-playbook", "main.yml", "-e", f"env=dev aws_region={self.aws_credentials['region_name']}"],
-                cwd=ansible_dir,
-                capture_output=True,
-                text=True
-            )
-            
-            if result.returncode == 0:
-                return f"Deployment completed successfully!\n\nOutput:\n{result.stdout}"
-            else:
-                return f"Deployment failed!\n\nError:\n{result.stderr}"
-                
-        except Exception as e:
-            logger.error(f"Error deploying with Ansible: {str(e)}", exc_info=True)
-            return f"Error deploying with Ansible: {str(e)}"

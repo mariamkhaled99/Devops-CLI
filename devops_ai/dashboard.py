@@ -82,6 +82,7 @@ class TextDashboard:
             "7": self.tool_handlers.dependency_check,
             "8": self.tool_handlers.contributors,
             "9": self.tool_handlers.docker_generation,
+            "10": self.tool_handlers.analyze_repo,
         }
 
         # Start Live rendering
@@ -94,8 +95,8 @@ class TextDashboard:
                 elif key == "KEY_UP" or key == "k":
                     self.active_tool_index = max(0, self.active_tool_index - 1)
                 elif key == "KEY_DOWN" or key == "j":
-                    self.active_tool_index = min(8, self.active_tool_index + 1)
-
+                    self.active_tool_index = min(9, self.active_tool_index + 1)
+                
                 # Update only the tools panel with the current tool
                 self.layout["tools"].update(self._render_tools_panel())
                 live.refresh()  # Refresh is essential for real-time updates
@@ -125,7 +126,8 @@ class TextDashboard:
             {"key": "6", "icon": "🧑‍💻", "name": "Code Quality", "desc": "Analyze code quality and maintainability"},
             {"key": "7", "icon": "📦", "name": "Dependency Check", "desc": "Check outdated or vulnerable dependencies"},
             {"key": "8", "icon": "👥", "name": "Contributors", "desc": "Show contributor statistics and activity"},
-            {"key": "9", "icon": "🐳", "name": "Docker Generation", "desc": "Generate Docker and docker-compose files"}
+            {"key": "9", "icon": "🐳", "name": "Docker Generation", "desc": "Generate Docker and docker-compose files"},
+            {"key": "10", "icon": "🔍", "name": "Repo Analyze", "desc": "Analyze the GitHub repository for insights"}
         ]
 
         # Get the current tool
@@ -145,7 +147,7 @@ class TextDashboard:
                 return "\r"
             elif key == 'q':
                 return "q"
-            elif key.isdigit() and 1 <= int(key) <= 9:
+            elif key.isdigit() and 1 <= int(key) <= 10:
                 return key
         return None
 

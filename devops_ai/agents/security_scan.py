@@ -48,8 +48,9 @@ class SecurityScanAgent(BaseAgent):
             3. Best practices
             4. Remediation steps
             """
-            
-            response = self.llm.invoke(prompt)
-            return response.content
+            response_text = self.run_llm(prompt)
+            return response_text
+            # response = self.llm.invoke(prompt)
+            # return response.content
         except Exception as e:
             return f"Error performing security scan: {str(e)}"

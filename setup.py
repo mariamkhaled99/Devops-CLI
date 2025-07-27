@@ -1,11 +1,14 @@
+# setup.py
+
 from setuptools import setup, find_packages
 
+# Read long description from README.md
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
     name="syntera-ai",
-    version="0.1.3",
+    version="0.1.4",
     author="Fouad Mahmoud",
     author_email="fouadmahmoud281@gmail.com",
     description="An AI-powered DevOps toolkit for infrastructure automation and analysis",
@@ -29,24 +32,52 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-    "langchain==0.3.25",
-    "langchain-core==0.3.60",
-    "langchain-openai==0.3.17",
-    "openai==1.81.0",
-    "rich==14.0.0",
-    "typer==0.15.4",
-    "python-dotenv==1.1.0",
-    "boto3==1.38.21",
-    "botocore==1.38.21",
-    "gitpython==3.1.44",
-    "gitingest==0.1.2",
-    "httpx==0.28.1",
-    "pygithub==2.6.1",
-    "keyboard==0.13.5",
-    "setuptools==75.2.0",
-    "urllib3==2.4.0",
-]
-,
+
+        # Compatible LangChain versions
+        # langchain-core 0.3.60 is required for stability with this package
+        "langchain==0.3.26",                  # Core LangChain library
+        "langchain-community==0.3.27",        # Community extensions for LangChain
+        "langchain-core>=0.3.68,<1.0.0",      # Core LangChain components
+        "langchain-openai==0.3.17",           # OpenAI wrapper for LangChain
+        "google-generativeai>=0.3.0",        # Google Gemini support
+        "langchain-google-genai>=1.0.0",  # Google Gemini integration
+
+        # Anthropic support with compatible langchain-anthropic version
+        "langchain-anthropic==0.3.17",        # Compatible with langchain-core 0.3.60
+        "anthropic==0.57.1",                  # Latest tested compatible version
+
+        # LLM provider
+        "openai==1.81.0",                     # Official OpenAI API client
+
+        # CLI and utility tools
+        "rich==14.0.0",                       # Rich text formatting for CLI
+        "typer==0.15.4",                      # CLI framework
+        "python-dotenv==1.1.0",               # Environment variable loading
+
+        # AWS and cloud interaction
+        "boto3==1.38.21",
+        "botocore==1.38.21",
+
+        # Git utilities
+        "gitpython==3.1.44",
+        "gitingest==0.1.2",                   # Git ingest utility (ensure this exists)
+
+        # Networking and HTTP
+        "httpx==0.28.1",
+        "urllib3==2.4.0",
+
+        # GitHub API
+        "pygithub==2.6.1",
+
+        # Keyboard interactions (might require elevated privileges)
+        "keyboard==0.13.5",
+
+        # Packaging
+        "setuptools==75.2.0",
+        
+        "tiktoken==0.7.0",              # Tokenization for OpenAI models
+
+    ],
     entry_points={
         "console_scripts": [
             "syntera-ai=devops_ai.cli:app",

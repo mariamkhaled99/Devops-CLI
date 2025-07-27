@@ -142,7 +142,7 @@ class DevOpsAITools:
         except Exception as e:
             return f"Error analyzing repository: {str(e)}"
 
-    def _docker_generation(self, repo_path: str, max_file_size: int = 10485760,
+    def _docker_generation(self, repo_path: str, env_path: str = None, max_file_size: int = 10485760,
                       include_patterns = None, exclude_patterns = None, output = None) -> str:
         """Generate Docker and docker-compose files for the given repository.
         
@@ -159,6 +159,7 @@ class DevOpsAITools:
         try:
             return self.docker_generation_agent.analyze(
                 repo_path=repo_path,
+                env_path=env_path,
                 max_file_size=max_file_size,
                 include_patterns=include_patterns,
                 exclude_patterns=exclude_patterns,

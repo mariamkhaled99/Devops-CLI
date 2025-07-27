@@ -1,4 +1,7 @@
+import re
 from typing import List, Union, Dict, Any
+
+import tiktoken
 from .base_agent import BaseAgent
 import os
 import json
@@ -7,21 +10,91 @@ import datetime
 from pathlib import Path
 from git import Repo
 from github import Github
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage
+# from langchain_openai import ChatOpenAI
+# from langchain_core.messages import HumanMessage
+from langchain.output_parsers import StructuredOutputParser, ResponseSchema
+
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
+
+# # Dependency and entrypoint file patterns
+DEPENDENCY_FILES = {
+    "requirements.txt", "package.json", "pom.xml", "build.gradle","tsconfig.json"
+    "composer.json", "gemfile", "cargo.toml", "setup.py",
+    "pyproject.toml", "environment.yml", "pipfile", "makefile", "dockerfile"
+}
+
+ENTRYPOINT_KEYWORDS = ["app.run(", "app.listen(", "main(", "__main__", "server.start", "uvicorn.run"]
+
+FRONTEND_EXTENSIONS = {".html", ".js", ".jsx", ".ts", ".tsx", ".vue", ".css"}
+
+
+
+
 class DockerGenerationAgent(BaseAgent):
     """Agent for generating Docker and docker-compose files based on repository analysis"""
 
     def __init__(self):
-        self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
+       super().__init__() 
+       
+    def extract_key_files(self, repo_path: str, max_files: int = 5) -> dict:
+        print(f"Extracting key files from repository: {repo_path}")
+        repo_path = Path(repo_path)
+        file_contents = {}
 
-    def analyze(self, repo_path: str, max_file_size: int = 10485760,
+        # Get dependency files first
+        for file in repo_path.rglob("*"):
+            name = file.name.lower()
+            if name in DEPENDENCY_FILES:
+                try:
+                    content = file.read_text(encoding='utf-8')[:2000]
+                    file_contents[str(file.relative_to(repo_path))] = content
+                    if len(file_contents) >= max_files:
+                        break
+                except Exception as e:
+                    file_contents[str(file.relative_to(repo_path))] = f"[Error reading file: {e}]"
+
+        # Try to identify likely entrypoint files (app.py, server.js etc.)
+        if len(file_contents) < max_files:
+            for file in repo_path.rglob("*"):
+                if file.suffix in {".py", ".js", ".ts", ".go"}:
+                    try:
+                        content = file.read_text(encoding='utf-8')[:2000]
+                        if any(k in content for k in ENTRYPOINT_KEYWORDS):
+                            file_contents[str(file.relative_to(repo_path))] = content
+                            if len(file_contents) >= max_files:
+                                break
+                    except:
+                        pass
+
+        return file_contents
+    def extract_frontend_files(self, repo_path: Path, max_files: int = 5) -> dict:
+        frontend_files = {}
+        for file in repo_path.rglob("*"):
+            if file.suffix in FRONTEND_EXTENSIONS:
+                try:
+                    content = self._strip_comments(file.read_text(encoding='utf-8')[:2000], file.suffix)
+                    frontend_files[str(file.relative_to(repo_path))] = content
+                    if len(frontend_files) >= max_files:
+                        break
+                except Exception as e:
+                    frontend_files[str(file.relative_to(repo_path))] = f"[Error reading file: {e}]"
+        return frontend_files
+
+    def _strip_comments(self, content: str, extension: str) -> str:
+        if extension in {'.js', '.ts', '.jsx', '.tsx'}:
+            # Remove // and /* */ comments
+            content = re.sub(r'//.*?$|/\*.*?\*/', '', content, flags=re.DOTALL | re.MULTILINE)
+        elif extension == '.html':
+            # Remove HTML comments
+            content = re.sub(r'<!--.*?-->', '', content, flags=re.DOTALL)
+        return content
+
+    def analyze(self, repo_path: str,env_path:str, max_file_size: int = 10485760,
                 include_patterns: Union[List[str], str] = None,
                 exclude_patterns: Union[List[str], str] = None,
                 output: str = None) -> str:
@@ -43,7 +116,7 @@ class DockerGenerationAgent(BaseAgent):
             if 'repo_path' not in repo_data:
                 repo_data['repo_path'] = abs_repo_path
 
-            dockerfile_content, compose_content = self._generate_docker_files(repo_data)
+            dockerfile_content, compose_content = self._generate_docker_files(repo_data, env_path=env_path)
 
             logger.info(f"Docker files generated. Services: {list(dockerfile_content.keys())}")
             logger.info(f"Compose content length: {len(compose_content) if compose_content else 0}")
@@ -58,118 +131,165 @@ class DockerGenerationAgent(BaseAgent):
             logger.error(f"Error generating Docker files: {str(e)}", exc_info=True)
             return f"Error generating Docker files: {str(e)}"
 
-    def _generate_docker_files(self, repo_data: Dict[str, Any]) -> tuple:
-        """Generate Dockerfile(s) and docker-compose.yml content using LangChain + OpenAI"""
+    def _generate_docker_files(self, repo_data: Dict[str, Any], env_path: str = None) -> tuple:
+        """Generate Dockerfile(s) and docker-compose.yml content using LangChain + OpenAI in a token-efficient manner."""
+        # TODO: Exclude the .git directory from tree
+
         repo_structure = repo_data.get('tree', {})
         repo_path = repo_data.get('repo_path', None)
 
+        print(f"[INFO] Starting Docker generation for: {repo_path}")
+        logger.info(f"[INFO] Starting Docker generation for: {repo_path}")
         logger.debug(f"[DEBUG] Repository structure (tree): {repo_structure}")
 
-        # Extract contents of key files for better LLM context
-        key_files = []
-        if repo_path:
-            for root, _, files in os.walk(repo_path):
-                for fname in files:
-                    if fname.lower() in {
-                        "requirements.txt", "package.json", "pom.xml", "build.gradle",
-                        "composer.json", "gemfile", "cargo.toml", "setup.py",
-                        "environment.yml", "pipfile", "makefile", "dockerfile"
-                    } or fname.endswith((
-                        ".py", ".js", ".ts", ".go", ".java", ".cs", ".rb", ".php", ".rs",
-                        ".cpp", ".c", ".sh", ".pl", ".scala", ".kt", ".swift", ".dart",
-                        ".m", ".r", ".jl", ".ex", ".exs", ".clj", ".cljs", ".groovy",
-                        ".lua", ".hs", ".sql", ".json", ".yml", ".yaml"
-                    )):
-                        key_files.append(os.path.relpath(os.path.join(root, fname), repo_path))
+        # Step 1: Get framework info (already optimized)
+        framework_context = self.get_port_framework(repo_path)
+        try:
+            framework_data = json.loads(re.sub(r"```json|```", "", framework_context.strip()))
+            logger.debug(f"[DEBUG] Detected framework info: {framework_data}")
+        except json.JSONDecodeError:
+            logger.warning("[WARN] Could not parse framework info as JSON.")
+            framework_data = {}
 
-        file_contents = {}
-        if repo_path:
-            for fname in key_files[:10]:  # Limit to 10 files for prompt size
-                fpath = os.path.join(repo_path, fname)
-                if os.path.exists(fpath):
-                    try:
-                        with open(fpath, 'r', encoding='utf-8') as f:
-                            file_contents[fname] = f.read()[:2000]
-                    except Exception as e:
-                        file_contents[fname] = f"[Error reading file: {e}]"
+        # Step 2: Extract key files
+        file_contents = self.extract_key_files(repo_path, max_files=3)
+        print(f"[INFO] Extracted key files: {list(file_contents.keys())}")
+        logger.info(f"[INFO] Extracted {len(file_contents)} key files: {list(file_contents.keys())}")
 
-        prompt = f"""Analyze the following repository structure and key file contents. Detect the main programming languages, frameworks, and build tools.
+        # Step 3a: Generate Dockerfiles using LLM
+        dockerfile_prompt = f"""
+    You are a DevOps assistant. Generate Dockerfiles based on the following backend/frontend details and key files.
 
-Generate appropriate Dockerfile(s) and a docker-compose.yml for the detected services.
-Follow these guidelines strictly:
-- Prefer multi-stage builds where applicable
-- Use non-root users and minimal base images
-- Include labels like maintainer, version, and description
-- Avoid invalid syntax and assumptions about stack
-- If unsure, clearly explain why and do not generate invalid files
+    Framework info:
+    {json.dumps(framework_data, indent=2)}
 
-Repository Structure:
-{repo_structure}
-"""
+    Use this information to generate appropriate Dockerfile(s).
+    Follow these guidelines strictly:
+    - Use multi-stage builds only in case of frontend or backend js based applications .
+    - If system-level packages are required, install them *before* switching to a non-root user.
+    - Before installing application dependencies, install required system-level build tools using the system_packages field in frontend and backend as well .
+    - if typescript in the system_packages field, install it using npm install -g typescript in addition with package.json install.
+    - Use the dependency files to infer necessary OS-level packages. 
+    - Always install dependencies before copying the rest of the application source code.
+    - Use actively maintained and secure minimal base images based on the detected language and framework.
+        - prefer the most recent stable version .
+        - do not use deprecated or unsupported base images , The buster variant is outdated .
+        - Automatically detect the appropriate version from dependency files .
+        - Avoid using deprecated or outdated base image tags or any tag associated with unsupported Debian versions.
+        - Ensure the base image is compatible with system-level package installation if needed.
+    - make sure to copy the whole application code into the container after installing dependencies with the correct path and name.
+    - Use the correct working directory for the application.
+    - Do not copy nginx configuration files from the repository, instead use the default nginx configuration.
+    - Use the correct COMMAND or ENTRYPOINT to run the application that related to the framework and make sure it is full correct path using the entrpoint_file.
+    - Include labels like maintainer, version only for docker files (always add them after the image tags).
+    - Do not add any comments in the Dockerfile.
+    - Avoid invalid syntax and assumptions about stack
+    - Make sure to use file naming format: `Dockerfile.<service_name>` 
+    - If unsure, clearly explain why and do not generate invalid files
+    
+    Repository Structure:
+    {repo_structure}
+    
+    """
 
-        if file_contents:
-            prompt += "\nKey file contents:\n"
-            for fname, content in file_contents.items():
-                prompt += f"--- {fname} ---\n{content}\n"
+   
 
-        prompt += """
-Please provide your response in the following JSON format, wrapped in triple backticks:
-```json
-{
-    "analysis": "Your analysis of technologies used",
-    "dockerfiles": {
-        "service_name1": "Dockerfile content",
-        "service_name2": "Dockerfile content"
-    },
-    "docker_compose": "Multi-service compose configuration"
-}
-If you cannot confidently generate valid Docker content, state it clearly in the analysis field.
-"""
-
-        logger.debug(f"[DEBUG] LLM prompt: {prompt}")
-
-        # LangChain integration
-        response = self.llm.invoke([HumanMessage(content=prompt)])
-        response_text = response.content.strip()
-
-        logger.debug(f"[DEBUG] Raw LLM response: {response_text[:200]}...")
-
-        # Extract JSON from possible markdown
-        if "```json" in response_text:
-            start_idx = response_text.find("```json") + 7
-            end_idx = response_text.rfind("```")
-            if end_idx > start_idx:
-                response_text = response_text[start_idx:end_idx].strip()
-                logger.debug(f"[DEBUG] Extracted JSON from backticks: {response_text[:100]}...")
-        elif response_text.startswith("```"):
-            start_idx = response_text.find("```") + 3
-            end_idx = response_text.rfind("```")
-            if end_idx > start_idx:
-                response_text = response_text[start_idx:end_idx].strip()
-                logger.debug(f"[DEBUG] Extracted general backtick content: {response_text[:100]}...")
+        dockerfile_schema = [
+            ResponseSchema(name="dockerfiles", description="Dictionary of Dockerfile contents for each service"),
+            ResponseSchema(name="is_nginx_frontend_used", description="Indicates if Nginx is used in frontend"),
+            ResponseSchema(name="is_nginx_backend_used", description="Nginx configuration content if used")
+        ]
+        dockerfile_parser = StructuredOutputParser.from_response_schemas(dockerfile_schema)
+        dockerfile_prompt += dockerfile_parser.get_format_instructions()
 
         try:
-            result = json.loads(response_text)
-            dockerfiles = result.get("dockerfiles", {})
-            docker_compose = result.get("docker_compose", "").strip()
+            dockerfile_response = self.run_llm(dockerfile_prompt)
+            # with open(os.path.join(repo_path, "dockerfile_raw.json"), "w") as f:
+            #     f.write(dockerfile_response)
+            dockerfile_result = dockerfile_parser.parse(dockerfile_response)
+            # 🛡️ Defensive parse if it's returned as a string
+            if isinstance(dockerfile_result, str):
+                try:
+                    dockerfile_result = json.loads(dockerfile_result)
+                except json.JSONDecodeError as e:
+                    logger.error(f"[ERROR] Failed to parse 'dockerfiles' as JSON: {e}")
+                    raise ValueError("Invalid Dockerfiles format returned from LLM.")
 
-            logger.debug(f"[DEBUG] Successfully parsed JSON. Found {len(dockerfiles)} Dockerfiles.")
+            dockerfiles = dockerfile_result.get("dockerfiles", {})
+            is_nginx_frontend_used = dockerfile_result.get("is_nginx_frontend_used", False)
+            is_nginx_backend_used = dockerfile_result.get("is_nginx_backend_used", False)
+            
+            
+            print(f"[INFO] Generated Dockerfiles: {list(dockerfiles.keys()) if dockerfiles else 'None'}")
+            logger.info(f"[INFO] Generated Dockerfiles: {list(dockerfiles.keys()) if dockerfiles else 'None'}")     
+            print(f"[INFO] Nginx frontend used: {is_nginx_frontend_used}")
+            logger.info(f"[INFO] Nginx frontend used: {is_nginx_frontend_used}")
+            print(f"[INFO] Nginx backend used: {is_nginx_backend_used}")    
+            logger.info(f"[INFO] Nginx backend used: {is_nginx_backend_used}")
 
-            # Validate content
-            if not dockerfiles or any('generation failed' in v.lower() or not v.strip() for v in dockerfiles.values()):
-                logger.error(f"[ERROR] Invalid Dockerfile content: {dockerfiles}")
-                raise ValueError("Invalid Dockerfile content generated.")
+          
 
-            if not docker_compose or 'generation failed' in docker_compose.lower():
-                logger.error(f"[ERROR] Invalid docker-compose content: {docker_compose[:100]}")
-                raise ValueError("Invalid docker-compose.yml content generated.")
+            # with open(os.path.join(repo_path, "dockerfiles.json"), "w") as f:
+            #     json.dump(dockerfiles, f, indent=2)
 
-            return dockerfiles, docker_compose
-
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
-            logger.error(f"Failed to parse LLM response: {e}")
-            logger.debug(f"Problematic JSON: {response_text}")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to generate Dockerfiles: {e}")
             return {}, ""
+
+        # Step 3b: Generate docker-compose.yml separately
+        compose_prompt = f"""
+    You are a DevOps assistant. Generate a docker-compose.yml file based on the following data:
+
+    Framework info:
+    {json.dumps(framework_data, indent=2)}
+
+
+    Guidelines:
+    - Define each service with build context '.', get Dockerfile name from {dockerfiles.keys() if dockerfiles else 'N/A'}
+    - Use ports based on detected framework .
+    - If the frontend Dockerfile uses Nginx (e.g., FROM nginx, or Nginx is part of build): {is_nginx_frontend_used} 
+        - You have to expose container port 80 to host port from Framework info frontend.
+    if backend Dockerfile needed migration or database connection add the command for it and make sure to wait it .
+    - If Nginx is used in backend, do the same mapping with port 80:{is_nginx_backend_used} but use the backend  port from Framework info backend.
+    - Use 'depends_on' if backend needed by frontend
+    - Add .env file if {env_path} is provided  ,and add it as ./.env
+    - never add env_file: if .env not provided
+    - Avoid using 'version' field
+    - Do not add any comments in the docker_compose.yml.
+    """
+
+        compose_schema = [
+            ResponseSchema(name="docker_compose", description="Docker Compose YAML content")
+        ]
+        compose_parser = StructuredOutputParser.from_response_schemas(compose_schema)
+        compose_prompt += compose_parser.get_format_instructions()
+
+        try:
+            compose_response = self.run_llm(compose_prompt)
+            # with open(os.path.join(repo_path, "compose_raw.json"), "w") as f:
+            #     f.write(compose_response)
+            compose_result = compose_parser.parse(compose_response)
+            docker_compose = compose_result.get("docker_compose", "").strip()
+
+            if not docker_compose or "generation failed" in docker_compose.lower():
+                raise ValueError("Invalid docker-compose.yml content.")
+
+            # with open(os.path.join(repo_path, "docker-compose.yml"), "w") as f:
+            #     f.write(docker_compose)
+
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to generate docker-compose.yml: {e}")
+            return {}, ""
+
+        # Final logging and return
+        # logger.info("[INFO] Successfully generated Dockerfiles and docker-compose.")
+        # with open(os.path.join(repo_path, ".repo-analysis.json"), "w") as f:
+        #     json.dump(framework_data, f, indent=2)
+
+        return dockerfiles, docker_compose
+
+
+
 
     def _write_docker_files(self, repo_path: str, dockerfiles: dict, compose_content: str) -> None:
         """Write Dockerfile(s), docker-compose.yml, and supporting files to the repository"""
@@ -190,7 +310,7 @@ If you cannot confidently generate valid Docker content, state it clearly in the
 
             # Write Dockerfiles
             for service, content in dockerfiles.items():
-                dockerfile_path = os.path.join(repo_path, f"Dockerfile.{service}")
+                dockerfile_path = os.path.join(repo_path, f"{service}" if service.startswith("Dockerfile.") else f"Dockerfile.{service}")
                 logger.info(f"Writing Dockerfile for {service} to {dockerfile_path}")
                 with open(dockerfile_path, "w", encoding="utf-8") as f:
                     f.write(content)
@@ -346,5 +466,113 @@ jobs:
         origin = repo.create_remote("origin", remote_url)
         origin.push()
         logger.info(f"Successfully pushed Docker files to GitHub: {remote_url}")
+    
+    
+    def get_port_framework(self, repo_path: str) -> str:
+        """Get the default port for the framework used in the repository"""
+        try:
+            if repo_path:
+                print(f"Analyzing repository at {repo_path}...")
 
-#automtically append secrets key in the docker files
+            repo_path = Path(repo_path)
+            if not repo_path.exists():
+                return json.dumps({"error": f"Repository path '{repo_path}' does not exist."})
+
+            backend_files = self.extract_key_files(repo_path)
+            frontend_files = self.extract_frontend_files(repo_path)
+
+            if not backend_files and not frontend_files:
+                return json.dumps({"error": "No backend or frontend files found."})
+
+            prompt = "You are a DevOps assistant. Analyze the following files and extract insights about:\n\n"
+
+            if backend_files:
+                prompt += ("If backend present:\n"
+                        "1. Backend web framework\n"
+                        "2. get the default port for this framework\n"
+                        "3. Backend entry-point file\n"
+                        "4. The name of its main dependency file\n"
+                        "5. A list of system-level build packages and libraries required for dockerfile installation\n")
+
+            if frontend_files:
+                prompt += (
+    "If frontend present:\n"
+    "1. Frontend framework\n"
+    "2. Default port for this framework\n"
+    "3. Frontend entry-point file\n"
+    "4. The name of its main dependency file\n"
+    "5. Analyze the dependency file and list system-level build packages required.\n"
+    "- If any `@types/` packages or a `tsconfig.json` file are present, treat the project as using TypeScript.\n"
+    "- Always include `typescript` as a required package if inferred.\n"
+)
+
+
+            prompt += "\nReturn valid clean JSON, include only existing sections (backend or frontend):\n"
+
+            example_output = {}
+            if backend_files:
+                example_output["backend"] = {
+                    "framework": "...",
+                    "port": "...",
+                    "entry_point": "...",
+                    "dependency_file": "...",
+                    "system_packages": "..."
+                }
+            if frontend_files:
+                example_output["frontend"] = {
+                    "framework": "...",
+                    "port": "...",
+                    "entry_point": "...",
+                    "dependency_file": "...",
+                    "system_packages": "..."
+                }
+
+            prompt += json.dumps(example_output, indent=2)
+            prompt += "\n\nFILES:\n"
+
+            for fname, content in {**backend_files, **frontend_files}.items():
+                prompt += f"\n--- {fname} ---\n{content}\n"
+
+            response_text = self.run_llm(prompt)
+            print(f"[DEBUG] Raw LLM response:\n{response_text[:500]}")  # Log preview
+
+            if not response_text.strip():
+                return json.dumps({"error": "LLM returned empty response"})
+
+            # Try extracting JSON block
+            if "```json" in response_text:
+                start = response_text.find("```json") + 7
+                end = response_text.rfind("```")
+                response_clean = response_text[start:end].strip()
+            elif response_text.startswith("```"):
+                start = response_text.find("```") + 3
+                end = response_text.rfind("```")
+                response_clean = response_text[start:end].strip()
+            else:
+                response_clean = response_text.strip()
+
+            if not response_clean:
+                return json.dumps({"error": "No JSON block found in LLM response"})
+
+            try:
+                parsed = json.loads(response_clean)
+            except json.JSONDecodeError as e:
+                return json.dumps({"error": f"Failed to parse LLM JSON: {e}"})
+
+            filtered = {k: v for k, v in parsed.items() if v and isinstance(v, dict)}
+            print(f"Filtered response: {filtered}")
+
+            return json.dumps(filtered, indent=2)
+
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+            
+        
+        
+
+
+#automatically append secrets key in the docker files
+
+
+

@@ -41,8 +41,8 @@ class RepoAnalyzeAgent(BaseAgent):
             4. DevOps improvement opportunities
             5. Security considerations
             """
-            
-            response = self.llm.invoke(prompt)
-            return response.content
+
+            response_text=self.run_llm(prompt)
+            return response_text
         except Exception as e:
             return f"Error analyzing repository: {str(e)}"

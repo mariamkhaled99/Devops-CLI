@@ -6,13 +6,18 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn,BarColumn
 from rich.syntax import Syntax
 from dotenv import load_dotenv
 from .core import DevOpsAITools
 from .dashboard import TextDashboard
 from devops_ai.agents.infra_suggest import InfraSuggestAgent  # Assuming this contains initialized InfraSuggestAgent
 import pkg_resources
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Initialize Typer app
 app = typer.Typer(help="SynteraAI - AI-powered DevOps CLI tool")
@@ -47,7 +52,8 @@ def _display_result(result: str, title: str):
                         try:
                             highlighted = Syntax(block, "python", theme="monokai")
                             table.add_row(highlighted)
-                        except:
+                        except Exception as e:
+                            logger.error(f"Error highlighting code block: {e}")
                             table.add_row(block)
                     else:  # Regular text
                         table.add_row(block)
