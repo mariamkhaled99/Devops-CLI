@@ -12,9 +12,10 @@ from datetime import datetime
 from pathlib import Path
 
 # LLM clients
-from langchain_openai import ChatOpenAI
-from langchain_anthropic import ChatAnthropic # type: ignore
+# from langchain_openai import ChatOpenAI
+# from langchain_anthropic import ChatAnthropic # type: ignore
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage
 from devops_ai.env_loader import gemini_key
 # Disable SSL warnings – not recommended for production
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -181,7 +182,7 @@ Key Content Insights:
     def run_llm(self, messages: Union[str, List[Dict[str, str]]]) -> str:
         """Call the LLM, return response, and track token usage + cost + log to CSV."""
         try:
-            from langchain_core.messages import HumanMessage
+            
 
             # Normalize message format
             if isinstance(messages, str):
