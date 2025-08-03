@@ -81,7 +81,9 @@ class TextDashboard:
             {"key": "7", "icon": "📦", "name": "Dependency Check", "desc": "Check for outdated or vulnerable dependencies"},
             {"key": "8", "icon": "👥", "name": "Contributors", "desc": "Show contributor statistics and activity"},
             {"key": "9", "icon": "🐳", "name": "Docker Generation", "desc": "Generate Docker and docker-compose files"},
-             {"key": "10", "icon": "🔍", "name": "Repo Analyze", "desc": "Analyze the GitHub repository for insights"}
+            {"key": "10", "icon": "🔍", "name": "Repo Analyze", "desc": "Analyze the GitHub repository for insights"},
+            {"key": "11","icon": "📈","name": "Monitoring Audit","desc": "Analyze Prometheus and Grafana configurations for observability, alerting, and visualization insights"}
+             
         ]
         
         # Add each tool with proper styling and highlighting for active tool
@@ -279,7 +281,7 @@ class TextDashboard:
                 self.console.print("\n")
                 choice = Prompt.ask(
                     "[bold green]►[/bold green] [bold cyan]Select a tool[/bold cyan]",
-                    choices=["1", "2", "3", "4", "5", "6", "7", "8", "9", "10","q"],
+                    choices=["1", "2", "3", "4", "5", "6", "7", "8", "9", "10","11","q"],
                     default="q"
                 )
                 
@@ -523,36 +525,7 @@ class TextDashboard:
                     if live.is_started:
                         live.stop()
 
-                    # env_path = None
-                    # pasted_env = ""
-
-                    # try:
-                    #     have_env = Prompt.ask(
-                    #         "[yellow]?[/yellow] Do you have a `.env` file you want to use? (y/n)",
-                    #         choices=["y", "n"], default="n"
-                    #     )
-
-                    #     if have_env == "y":
-                    #         self.console.print("[green]Paste your `.env` content below. When done, type a single line with 'EOF' and press Enter.[/green]\n")
-                    #         self.console.print("[italic dim]Example:\nKEY=value\nDEBUG=True\nEOF[/italic dim]\n")
-
-                    #         env_lines = []
-                    #         while True:
-                    #             line = self.console.input()
-                    #             if line.strip().upper() == "EOF":
-                    #                 break
-                    #             env_lines.append(line)
-                    #         pasted_env = "\n".join(env_lines)
-
-                    #         if pasted_env:
-                    #             env_path = os.path.join(self.local_repo_path, ".env")
-                    #             with open(env_path, "w", encoding="utf-8") as f:
-                    #                 f.write(pasted_env)
-                    #             self.console.print(f"[bold green].env file saved at {env_path}[/bold green]")
-
-                    # except Exception as e:
-                    #     self.console.print(f"[bold red]Error during .env input: {e}[/bold red]")
-
+                   
                     # ✅ Resume Live rendering
                     if not live.is_started:
                         live.start()

@@ -16,14 +16,14 @@ An AI-powered DevOps toolkit for infrastructure automation and analysis. This to
 ## Installation
 
 ```bash
-pip install syntera-ai
+pip install syntera-ai-cli
 ```
 
 ## Quick Start
 
 1. Set up your OpenAI API key:
 ```bash
-export OPENAI_API_KEY='your-api-key-here'
+export GEMINI_API_KEY='your-gemini-api-key-here'
 ```
 
 2. Run the dashboard:

@@ -152,7 +152,7 @@ class DockerGenerationAgent(BaseAgent):
             framework_data = {}
 
         # Step 2: Extract key files
-        file_contents = self.extract_key_files(repo_path, max_files=3)
+        file_contents = self.extract_key_files(repo_path, max_files=4)
         print(f"[INFO] Extracted key files: {list(file_contents.keys())}")
         logger.info(f"[INFO] Extracted {len(file_contents)} key files: {list(file_contents.keys())}")
 
@@ -164,11 +164,15 @@ class DockerGenerationAgent(BaseAgent):
     {json.dumps(framework_data, indent=2)}
 
     Use this information to generate appropriate Dockerfile(s).
+    This is the repo_path: {repo_path}
+        - When copying files in Docker, make sure to use a relative path based on the Docker build context.
+
     Follow these guidelines strictly:
     - Use multi-stage builds only in case of frontend or backend js based applications .
     - If system-level packages are required, install them *before* switching to a non-root user.
     - Before installing application dependencies, install required system-level build tools using the system_packages field in frontend and backend as well .
     - if typescript in the system_packages field, install it using npm install -g typescript in addition with package.json install.
+    - Make sure to install npm install instead of npm ci (always).
     - Use the dependency files to infer necessary OS-level packages. 
     - Always install dependencies before copying the rest of the application source code.
     - Use actively maintained and secure minimal base images based on the detected language and framework.
@@ -235,6 +239,10 @@ class DockerGenerationAgent(BaseAgent):
         except Exception as e:
             logger.error(f"[ERROR] Failed to generate Dockerfiles: {e}")
             return {}, ""
+        env_file_path = os.path.join(repo_path, '.env') if repo_path else None
+
+        env_path = env_file_path if env_file_path and os.path.isfile(env_file_path) else None
+        print("env_path:", env_path) 
 
         # Step 3b: Generate docker-compose.yml separately
         compose_prompt = f"""
@@ -247,14 +255,23 @@ class DockerGenerationAgent(BaseAgent):
     Guidelines:
     - Define each service with build context '.', get Dockerfile name from {dockerfiles.keys() if dockerfiles else 'N/A'}
     - Use ports based on detected framework .
-    - If the frontend Dockerfile uses Nginx (e.g., FROM nginx, or Nginx is part of build): {is_nginx_frontend_used} 
-        - You have to expose container port 80 to host port from Framework info frontend.
+        
+    - If the frontend Dockerfile uses Nginx (e.g., FROM nginx, or Nginx is part of build): {is_nginx_frontend_used}
+    - Expose container port **80** (Nginx default).
+    - Map it to the **host port** specified in frontend framework info (frontend_host_port) .
+    - Example: ports:
+                - "<frontend_host_port>:80"
     if backend Dockerfile needed migration or database connection add the command for it and make sure to wait it .
-    - If Nginx is used in backend, do the same mapping with port 80:{is_nginx_backend_used} but use the backend  port from Framework info backend.
+    - If Nginx is used in backend: {is_nginx_backend_used}
+        - Map container port **80** to the **host port** from backend framework info.
     - Use 'depends_on' if backend needed by frontend
-    - Add .env file if {env_path} is provided  ,and add it as ./.env
-    - never add env_file: if .env not provided
-    - Avoid using 'version' field
+    - Add .env file in each service only if env_path is provided:
+    {f"env_path is provided: {env_path}" if env_path else "env_path is not provided"}
+    - If provided, add to each service:
+        env_file:
+            - .env
+    - If not provided, do not add env_file at all.
+    - Do not use 'version' .
     - Do not add any comments in the docker_compose.yml.
     """
 
@@ -449,10 +466,10 @@ jobs:
             "llm_model": "gpt-4o-mini"
         }
 
-        log_path = os.path.join(repo_path, ".docker-generation.log.json")
-        with open(log_path, "w", encoding="utf-8") as f:
-            json.dump(log_content, f, indent=2)
-        logger.info(f"Saved analysis log to {log_path}")
+        # log_path = os.path.join(repo_path, ".docker-generation.log.json")
+        # with open(log_path, "w", encoding="utf-8") as f:
+        #     json.dump(log_content, f, indent=2)
+        # logger.info(f"Saved analysis log to {log_path}")
 
     def push_to_github(self, repo_path: str, token: str, commit_message: str = "Auto-generated Docker files"):
         g = Github(token)
@@ -561,6 +578,13 @@ jobs:
 
             filtered = {k: v for k, v in parsed.items() if v and isinstance(v, dict)}
             print(f"Filtered response: {filtered}")
+            
+            framework_port_analysis_path = os.path.join(repo_path, "framework_port_analysis.json")
+            if not os.path.exists(framework_port_analysis_path):
+                with open(framework_port_analysis_path, "w", encoding="utf-8") as f:
+                    f.write(json.dumps(filtered, indent=2))
+                logger.info(f"Generated framework_port_analysis.json at {framework_port_analysis_path}")
+
 
             return json.dumps(filtered, indent=2)
 
@@ -570,9 +594,5 @@ jobs:
             
         
         
-
-
-#automatically append secrets key in the docker files
-
 
 

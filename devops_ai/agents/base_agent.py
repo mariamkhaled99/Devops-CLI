@@ -36,7 +36,7 @@ class BaseAgent:
 
             # Check which LLM provider is available
             # openai_key = os.getenv("OPENAI_API_KEY")
-            anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+            # anthropic_key = os.getenv("ANTHROPIC_API_KEY")
             gemeini_key = os.getenv("GEMINI_API_KEY")
             # print(f"Using LLM API key: {anthropic_key if anthropic_key else 'None'}")
 
@@ -156,7 +156,8 @@ Key Content Insights:
     # helper method to moinitor costs and tokens
     def get_model_cost_per_1k_tokens(self) -> float:
         """Get the cost per 1k tokens for the current model."""
-        model_name = getattr(self.llm, "model", "").lower()
+        # model_name = getattr(self.llm, "model", "").lower()
+        model_name="models/gemini-2.5-flash"
 
         # Normalize known aliases
         if "claude" in model_name:
@@ -167,8 +168,8 @@ Key Content Insights:
             elif "opus" in model_name:
                 return 0.015  # $0.015 per 1k tokens for Claude Opus
         elif "gemini" in model_name:
-            if "flash" in model_name:
-                return 0.01
+            print(f"model_name:{model_name}")
+            return 0.01
 
         if "gpt-4" in model_name:
             return 0.01  # $0.01 per 1k tokens (adjust for gpt-4-turbo if needed)

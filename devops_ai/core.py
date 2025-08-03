@@ -13,7 +13,8 @@ from .agents import (
     InfraSuggestAgent,
     SecurityScanAgent,
     OptimizeAgent,
-    DockerGenerationAgent
+    DockerGenerationAgent,
+    GrapheneAgent
 )
 
 # Load environment variables
@@ -31,6 +32,8 @@ class DevOpsAITools:
         self.security_scan_agent = SecurityScanAgent()
         self.optimize_agent = OptimizeAgent()
         self.docker_generation_agent = DockerGenerationAgent()
+      
+        self.grafana_analysis_agent = GrapheneAgent()
         
         # Initialize tools
         self.tools = self._initialize_tools()
@@ -167,6 +170,33 @@ class DevOpsAITools:
             )
         except Exception as e:
             return f"Error generating Docker files: {str(e)}"
+        
+    def _grafana_analysis(self, repo_path: str, max_file_size: int = 10485760,
+                      include_patterns=None, exclude_patterns=None, output=None) -> str:
+        """
+        Analyze Grafana setup within a repository for dashboards, data sources, and observability practices.
+
+        Args:
+            repo_path (str): Path to the local repository or GitHub repository URL.
+            max_file_size (int, optional): Max file size to include in analysis (default: 10MB).
+            include_patterns (list[str] or str, optional): File patterns to include (e.g., ['*.json', '*.yml']).
+            exclude_patterns (list[str] or str, optional): File patterns to exclude.
+            output (str, optional): Optional output path to store analysis result.
+
+        Returns:
+            str: Analysis summary or recommendations for the Grafana setup.
+        """
+        try:
+            return self.grafana_analysis_agent.analyze(
+                repo_path=repo_path,
+                max_file_size=max_file_size,
+                include_patterns=include_patterns,
+                exclude_patterns=exclude_patterns,
+                output=output
+            )
+        except Exception as e:
+            return f"❌ Error analyzing Grafana repository: {str(e)}"
+
 
     def _initialize_tools(self):
         return [
@@ -214,5 +244,11 @@ class DevOpsAITools:
                 name="docker_generation",
                 func=self._docker_generation,
                 description="Generate Docker and docker-compose files based on repository analysis"
-            )
+            ),
+            Tool(
+    name="grafana_analysis",
+    func=self._grafana_analysis,
+    description="Analyze Grafana configuration and dashboards for observability insights and best practices"
+)
+
         ]

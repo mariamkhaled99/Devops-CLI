@@ -307,3 +307,23 @@ class ToolHandlers:
             progress.update(task, advance=50)
 
         return result, "🧠 Repository Analysis Results"
+    
+    def analyze_grafana_repo(self) -> Tuple[str, str]:
+        """Analyze Grafana-related repository for dashboards, data sources, and best practices."""
+
+        result = ""
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold yellow]Scanning Grafana setup...[/bold yellow]"),
+            BarColumn(bar_width=40),
+            TextColumn("[bold yellow]Please wait[/bold yellow]"),
+        ) as progress:
+            task = progress.add_task("Analyzing", total=100)
+            progress.update(task, advance=40)
+
+            # Analyze the repository for Grafana-specific insights
+            result = self.devops_tools._grafana_analysis(self.local_repo_path)
+
+            progress.update(task, advance=60)
+
+        return result, "📊 Grafana Repository Analysis Results"

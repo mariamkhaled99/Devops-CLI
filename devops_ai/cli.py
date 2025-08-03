@@ -149,16 +149,16 @@ def optimize(
 
 @app.command()
 def version():
-    """Show version information for syntera-ai and its dependencies."""
+    """Show version information for syntera-ai-cli and its dependencies."""
     try:
         # Get syntera-ai version
-        syntera_version = pkg_resources.get_distribution("syntera-ai").version
+        syntera_version = pkg_resources.get_distribution("syntera-ai-cli").version
         
         # Get gitingest version
         gitingest_version = pkg_resources.get_distribution("gitingest").version
         
         console.print("\n[bold cyan]Version Information:[/bold cyan]")
-        console.print(f"syntera-ai: [bold green]{syntera_version}[/bold green]")
+        console.print(f"syntera-ai-cli: [bold green]{syntera_version}[/bold green]")
         console.print(f"gitingest: [bold green]{gitingest_version}[/bold green]")
         
     except pkg_resources.DistributionNotFound as e:
@@ -216,12 +216,12 @@ def dependencies():
         console.print("\n[bold cyan]Core Dependencies:[/bold cyan]")
         console.print(table)
         
-        # Show syntera-ai version
+        # Show syntera-ai-cli version
         try:
-            syntera_version = pkg_resources.get_distribution("syntera-ai").version
-            console.print(f"\n[bold cyan]syntera-ai version:[/bold cyan] [bold green]{syntera_version}[/bold green]")
+            syntera_version = pkg_resources.get_distribution("syntera-ai-cli").version
+            console.print(f"\n[bold cyan]syntera-ai-cli version:[/bold cyan] [bold green]{syntera_version}[/bold green]")
         except pkg_resources.DistributionNotFound:
-            console.print("\n[bold red]syntera-ai is not installed as a package[/bold red]")
+            console.print("\n[bold red]syntera-ai-cli is not installed as a package[/bold red]")
         
     except Exception as e:
         console.print(f"[bold red]Error getting dependency information:[/bold red] {str(e)}")

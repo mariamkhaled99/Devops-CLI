@@ -8,6 +8,8 @@ from .infra_suggest import InfraSuggestAgent
 from .security_scan import SecurityScanAgent
 from .optimize import OptimizeAgent
 from .docker_generation import DockerGenerationAgent
+from .grafana import GrapheneAgent
+
 
 # Export all agent classes
 __all__ = [
@@ -19,5 +21,7 @@ __all__ = [
     'InfraSuggestAgent',
     'SecurityScanAgent',
     'OptimizeAgent',
-    'DockerGenerationAgent'
+    'DockerGenerationAgent',
+    'GrapheneAgent'
+
 ]

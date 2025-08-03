@@ -449,7 +449,7 @@ class InfraSuggestAgent(BaseAgent):
             # Step 2: Define the expected response schema
             infra_schema = [
                 ResponseSchema(name="architecture_overview", description="High-level architecture description"),
-                ResponseSchema(name="infrastructure_recommendations", description="List of infrastructure recommendations for each detected service/component"),
+                ResponseSchema(name="infrastructure_recommendations", description="List of infrastructure recommendations for each detected service/component. Each item must be a dictionary.")
                 
             ]
             # Base parser
@@ -493,36 +493,41 @@ class InfraSuggestAgent(BaseAgent):
                 
             response_text = self.run_llm(prompt)
             retry_parser = RetryOutputParser.from_llm(parser=infra_parser, llm=self.llm)
-            json_response = retry_parser.parse_with_prompt(response_text, prompt)
-            
-            print(f"json_response from infra :{json_response}")
-            
-              
-            # ✅ Step 5.5: Normalize recommendations list
-            recommendations = json_response.get("infrastructure_recommendations")
-            # Explicit validation before normalizing
+            try:
+                json_response = retry_parser.parse_with_prompt(response_text, prompt)
+                print(f"📦 Type of json response : {type(json_response)}")
 
-
-            if not isinstance(recommendations, list) or not all(isinstance(r, dict) for r in recommendations):
-                print("=======================================================================")
-                print(f"❌ Invalid recommendations:\n{recommendations}")
-                print(f"📦 Type of recommendations: {type(recommendations)}")
-                print("=======================================================================")
-
-                # Try to parse if it's a string that might be JSON
+                recommendations = json_response.get("infrastructure_recommendations")
+                
                 if isinstance(recommendations, str):
-                    try:
-                        recommendations = json.loads(recommendations)
-                        print("✅ Successfully parsed string into JSON.")
+                    recommendations = json.loads(recommendations)
+                    print(f"📦 Type of recommendations: {type(recommendations)}")
+                    json_response["infrastructure_recommendations"] = recommendations
 
-                        # Recheck after parsing
-                        if not isinstance(recommendations, list) or not all(isinstance(r, dict) for r in recommendations):
-                            raise ValueError("Parsed JSON is still not a valid list of dictionaries.")
-                    except json.JSONDecodeError as e:
-                        print(f"❌ Failed to parse JSON string: {e}")
-                        raise ValueError("Could not parse recommendations from string JSON.") from e
-                else:
-                    raise ValueError("Invalid recommendations format. Expected a list of dictionaries.")
+            except Exception as e:
+                # Retry manually if error is recoverable
+                print("🔁 Retrying LLM call due to post-parsing failure...")
+                response_text = self.run_llm(prompt)
+                json_response = retry_parser.parse_with_prompt(response_text, prompt)
+
+            # Explicit validation before normalizing
+           
+
+            # Try to parse if it's a string that might be JSON
+            # if isinstance(recommendations, str):
+            #     print(f"📦 Type of recommendations: {type(recommendations)}")
+            #     try:
+            #         recommendations = json.loads(recommendations)
+            #         print("✅ Successfully parsed string into JSON.")
+
+            #         # Recheck after parsing
+            #         if not isinstance(recommendations, list) or not all(isinstance(r, dict) for r in recommendations):
+            #             raise ValueError("Parsed JSON is still not a valid list of dictionaries.")
+            #     except json.JSONDecodeError as e:
+            #         print(f"❌ Failed to parse JSON string: {e}")
+            #         raise ValueError("Could not parse recommendations from string JSON.") from e
+            # else:
+            #     raise ValueError("Invalid recommendations format. Expected a list of dictionaries.")
 
                         
                 
