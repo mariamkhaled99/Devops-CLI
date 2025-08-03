@@ -31,6 +31,9 @@ windows(Powershell):
 $env:GEMINI_API_KEY = "your-gemini-api-key-here"
 
 ```
+Another great option:
+use `.env `file .
+
 
 2. Run the dashboard:
 ```bash
@@ -71,6 +74,60 @@ syntera-ai dashboard
 - Python 3.8 or higher
 - Gemmini API key
 - Git (for repository analysis)
+
+## 🚀 Features
+
+This tool provides a full DevOps automation pipeline, from containerization to deployment and monitoring setup. Follow the features **in order** for the best results.
+
+---
+
+### 🐳 Docker Generation
+
+Automatically generate `Dockerfile`s and `docker-compose.yml` based on your project’s structure and tech stack.
+
+- Detects backend/frontend frameworks, ports, and dependencies.
+- Creates service-specific Dockerfiles with best practices.
+- Adds `.env` support if available.
+- Ensures Nginx handling and proper ENTRYPOINT setup.
+
+➡️ **Output**: Dockerfiles and a ready-to-use `docker-compose.yml`.
+
+---
+
+### 🏗️ Infrastructure Provisioning
+
+Generates full Ansible playbooks and reusable roles to deploy your app on a cloud server (e.g., AWS EC2).
+
+- Provisions VPC, subnet, EC2, keypair, security groups.
+- Installs Docker, sets up app containers, and deploys from your repo.
+- Includes modular roles like `install_docker`, `code_setup`, `docker_template`, and optional `database_service`.
+
+➡️ **Output**: Ansible `main.yml` and role directories under `roles/`.
+
+---
+
+### 📈 Monitoring Audit
+
+Analyzes your Prometheus & Grafana setup for observability and DevOps best practices.
+
+- Reviews Ansible roles for monitoring (e.g., `monitoring`, `alerting`).
+- Suggests improvements in metrics collection, dashboards, and alert rules.
+- Ensures roles are modular and production-ready.
+
+➡️ **Output**: An analysis report with improvement recommendations, in addition to eding the ansible playbook to automate generate grafana dashboard for server metrics.
+
+---
+
+### ✅ Usage Order
+
+To use this tool effectively:
+
+1. **Start with Docker Generation** – containerize your services.
+2. **Proceed to Infrastructure Provisioning** – deploy containers to the cloud.
+3. **Finish with Monitoring Audit** – validate observability and alerts.
+
+---
+
 
 ## Contributing
 
