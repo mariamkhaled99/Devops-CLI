@@ -15,15 +15,13 @@ from pathlib import Path
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic # type: ignore
 from langchain_google_genai import ChatGoogleGenerativeAI
-
+from devops_ai.env_loader import gemini_key
 # Disable SSL warnings – not recommended for production
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 os.environ["CURL_CA_BUNDLE"] = ""
 os.environ["REQUESTS_CA_BUNDLE"] = ""
 os.environ["SSL_CERT_FILE"] = ""
 
-# Load environment variables from .env file
-load_dotenv()
 
 
 class BaseAgent:
@@ -37,7 +35,7 @@ class BaseAgent:
             # Check which LLM provider is available
             # openai_key = os.getenv("OPENAI_API_KEY")
             # anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-            gemeini_key = os.getenv("GEMINI_API_KEY")
+            
             # print(f"Using LLM API key: {anthropic_key if anthropic_key else 'None'}")
 
             # if openai_key:
@@ -49,12 +47,12 @@ class BaseAgent:
             #         http_client=http_client,
             #     )
             #     print("Using OpenAI (ChatOpenAI)")
-            if gemeini_key:
+            if gemini_key:
                 # Initialize Google Gemini LLM
                 self.llm = ChatGoogleGenerativeAI(
                     model="gemini-2.5-flash",
                 temperature=0.2,
-                google_api_key=os.getenv("GEMINI_API_KEY")
+                google_api_key=gemini_key
                 )
                 print("Using Google Gemini (ChatGoogleGenerativeAI)")
 
@@ -69,10 +67,10 @@ class BaseAgent:
                 # print("Using Anthropic (ChatAnthropic)")
                
             else:
-                raise ValueError("No LLM API key found. Please set OPENAI_API_KEY or ANTHROPIC_API_KEY.")
+                raise ValueError("No LLM API key found. Please set GEMINI_API_KEY.")
             
             if self.llm:
-                self.model_name = self.model_name = getattr(self.llm, "model", "claude-3-7-sonnet-latest")
+                self.model_name = self.model_name = getattr(self.llm, "model", "gemini-2.5-flash")
                 self.total_tokens_used = 0
                 self.total_cost_usd = 0.0
                 self.budget_usd = float(os.getenv("LLM_BUDGET", 5.0))  # Default $5 budget

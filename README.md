@@ -22,8 +22,14 @@ pip install syntera-ai-cli
 ## Quick Start
 
 1. Set up your OpenAI API key:
+linux:
 ```bash
 export GEMINI_API_KEY='your-gemini-api-key-here'
+```
+windows(Powershell):
+```bash
+$env:GEMINI_API_KEY = "your-gemini-api-key-here"
+
 ```
 
 2. Run the dashboard:
@@ -63,7 +69,7 @@ syntera-ai dashboard
 ## Requirements
 
 - Python 3.8 or higher
-- OpenAI API key
+- Gemmini API key
 - Git (for repository analysis)
 
 ## Contributing
