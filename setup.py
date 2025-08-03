@@ -14,7 +14,7 @@ setup(
     description="An AI-powered DevOps toolkit for infrastructure automation and analysis",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/fouadmahmoud281/syntera-ai",
+    url="https://github.com/mariamkhaled99/Devops-CLI",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",
