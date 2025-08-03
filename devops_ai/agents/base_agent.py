@@ -192,48 +192,58 @@ Key Content Insights:
             response = self.llm.invoke(messages)
 
             # Extract token usage from response metadata
-            usage = response.response_metadata.get("usage", {})
-            input_tokens = usage.get("input_tokens", 0)
-            output_tokens = usage.get("output_tokens", 0)
-            total_tokens = input_tokens + output_tokens
+            print(f"Response metadata: {response.response_metadata}")
+            # print("===============================================================")
+            # usage = response.response_metadata.get("usage", {})
+            # print(f"usage: {usage}")
+            # print("===============================================================")
+            # input_tokens = usage.get("input_tokens", 0)
+            # print(f"input_tokens: {input_tokens}")  
+            # print("===============================================================")
+            # output_tokens = usage.get("output_tokens", 0)
+            # print(f"output_tokens: {output_tokens}")
+            # print("===============================================================")
+            # total_tokens = input_tokens + output_tokens
+            # print(f"total_tokens: {total_tokens}")
+            # print("===============================================================")
 
             # Calculate cost
-            cost = (total_tokens / 1000) * self.get_model_cost_per_1k_tokens()
+            # cost = (total_tokens / 1000) * self.get_model_cost_per_1k_tokens()
 
-            # Track totals
-            self.total_tokens_used += total_tokens
-            self.total_cost_usd += cost
-            self.budget_usd -= cost
+            # # Track totals
+            # self.total_tokens_used += total_tokens
+            # self.total_cost_usd += cost
+            # self.budget_usd -= cost
 
             # Print usage summary
             print("==============agent monitoring costs and tokens==============")
-            print(f"🔢 Input tokens: {input_tokens}")
-            print(f"🔢 Output tokens: {output_tokens}")
-            print(f"🔢 Total tokens: {total_tokens}")
-            print(f"💰 Cost this call: ${cost:.4f}")
-            print(f"📊 Total cost so far: ${self.total_cost_usd:.4f}")
-            print(f"💼 Remaining budget: ${self.budget_usd:.2f}")
+            # print(f"🔢 Input tokens: {input_tokens}")
+            # print(f"🔢 Output tokens: {output_tokens}")
+            # print(f"🔢 Total tokens: {total_tokens}")
+            # print(f"💰 Cost this call: ${cost:.4f}")
+            # print(f"📊 Total cost so far: ${self.total_cost_usd:.4f}")
+            # print(f"💼 Remaining budget: ${self.budget_usd:.2f}")
             print("=============================================================")
 
             # ✅ Log to CSV
-            csv_path = Path("llm_usage_log.csv")
-            file_exists = csv_path.exists()
+            # csv_path = Path("llm_usage_log.csv")
+            # file_exists = csv_path.exists()
 
-            with csv_path.open("a", newline='', encoding="utf-8") as csvfile:
-                writer = csv.writer(csvfile)
-                if not file_exists:
-                    writer.writerow([
-                        "timestamp", "model", "tokens_used", "cost_usd",
-                        "total_cost_usd", "remaining_budget_usd"
-                    ])
-                writer.writerow([
-                    datetime.now().isoformat(timespec="seconds"),
-                    getattr(self.llm, "model", type(self.llm).__name__),
-                    total_tokens,
-                    round(cost, 4),
-                    round(self.total_cost_usd, 4),
-                    round(self.budget_usd, 2)
-                ])
+            # with csv_path.open("a", newline='', encoding="utf-8") as csvfile:
+            #     writer = csv.writer(csvfile)
+            #     if not file_exists:
+            #         writer.writerow([
+            #             "timestamp", "model", "tokens_used", "cost_usd",
+            #             "total_cost_usd", "remaining_budget_usd"
+            #         ])
+            #     writer.writerow([
+            #         datetime.now().isoformat(timespec="seconds"),
+            #         getattr(self.llm, "model", type(self.llm).__name__),
+            #         total_tokens,
+            #         round(cost, 4),
+            #         round(self.total_cost_usd, 4),
+            #         round(self.budget_usd, 2)
+            #     ])
 
             return response.content if hasattr(response, "content") else str(response)
 

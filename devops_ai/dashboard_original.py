@@ -72,17 +72,18 @@ class TextDashboard:
         
         # Define tool options with better visual indicators and descriptions
         tools = [
-            {"key": "1", "icon": "📊", "name": "Analyze Logs", "desc": "Analyze log files for patterns and errors"},
+            # {"key": "1", "icon": "📊", "name": "Analyze Logs", "desc": "Analyze log files for patterns and errors"},
+            {"key": "1", "icon": "🐳", "name": "Docker Generation", "desc": "Generate Docker and docker-compose files"},
             {"key": "2", "icon": "🏗️", "name": "Infrastructure", "desc": "Get infrastructure recommendations"},
-            {"key": "3", "icon": "🔒", "name": "Security Scan", "desc": "Perform security vulnerability scanning"},
-            {"key": "4", "icon": "⚡", "name": "Optimize", "desc": "Get performance optimization suggestions"},
-            {"key": "5", "icon": "⚙️", "name": "Git Ingest", "desc": "Ingest and process a GitHub repository"},
-            {"key": "6", "icon": "🧑‍💻", "name": "Code Quality", "desc": "Analyze code quality and maintainability"},
-            {"key": "7", "icon": "📦", "name": "Dependency Check", "desc": "Check for outdated or vulnerable dependencies"},
-            {"key": "8", "icon": "👥", "name": "Contributors", "desc": "Show contributor statistics and activity"},
-            {"key": "9", "icon": "🐳", "name": "Docker Generation", "desc": "Generate Docker and docker-compose files"},
-            {"key": "10", "icon": "🔍", "name": "Repo Analyze", "desc": "Analyze the GitHub repository for insights"},
-            {"key": "11","icon": "📈","name": "Monitoring Audit","desc": "Analyze Prometheus and Grafana configurations for observability, alerting, and visualization insights"}
+            # {"key": "3", "icon": "🔒", "name": "Security Scan", "desc": "Perform security vulnerability scanning"},
+            # {"key": "4", "icon": "⚡", "name": "Optimize", "desc": "Get performance optimization suggestions"},
+            # {"key": "5", "icon": "⚙️", "name": "Git Ingest", "desc": "Ingest and process a GitHub repository"},
+            # {"key": "6", "icon": "🧑‍💻", "name": "Code Quality", "desc": "Analyze code quality and maintainability"},
+            # {"key": "7", "icon": "📦", "name": "Dependency Check", "desc": "Check for outdated or vulnerable dependencies"},
+            # {"key": "8", "icon": "👥", "name": "Contributors", "desc": "Show contributor statistics and activity"},
+            
+            # {"key": "10", "icon": "🔍", "name": "Repo Analyze", "desc": "Analyze the GitHub repository for insights"},
+            {"key": "3","icon": "📈","name": "Monitoring Audit","desc": "Analyze Prometheus and Grafana configurations for observability, alerting, and visualization insights"}
              
         ]
         
@@ -281,7 +282,8 @@ class TextDashboard:
                 self.console.print("\n")
                 choice = Prompt.ask(
                     "[bold green]►[/bold green] [bold cyan]Select a tool[/bold cyan]",
-                    choices=["1", "2", "3", "4", "5", "6", "7", "8", "9", "10","11","q"],
+                    # "4", "5", "6", "7", "8", "9", "10","11"
+                    choices=["1", "2", "3","q"],
                     default="q"
                 )
                 
@@ -297,32 +299,32 @@ class TextDashboard:
                 live.refresh()
                 
                 # Process based on choice with enhanced status indicators
-                if choice == "1":
-                    # Update input panel with specific prompt
-                    self.layout["input"].update(self._create_input_panel("Enter log file path"))
-                    live.refresh()
+                # if choice == "1":
+                #     # Update input panel with specific prompt
+                #     self.layout["input"].update(self._create_input_panel("Enter log file path"))
+                #     live.refresh()
                     
-                    # Exit Live context to get input
-                    live.stop()
-                    self.console.print("\n")
-                    log_file = Prompt.ask("[bold green]►[/bold green] [bold cyan]Enter log file path[/bold cyan]")
-                    live.start()
+                #     # Exit Live context to get input
+                #     live.stop()
+                #     self.console.print("\n")
+                #     log_file = Prompt.ask("[bold green]►[/bold green] [bold cyan]Enter log file path[/bold cyan]")
+                #     live.start()
                     
-                    # Show progress
-                    with Progress(
-                        SpinnerColumn(),
-                        TextColumn("[bold cyan]Analyzing logs...[/bold cyan]"),
-                        BarColumn(bar_width=40),
-                        TextColumn("[bold cyan]Please wait[/bold cyan]"),
-                    ) as progress:
-                        task = progress.add_task("Analyzing", total=100)
-                        progress.update(task, advance=50)
-                        result = self.devops_tools._analyze_logs(log_file)
-                        progress.update(task, advance=50)
+                #     # Show progress
+                #     with Progress(
+                #         SpinnerColumn(),
+                #         TextColumn("[bold cyan]Analyzing logs...[/bold cyan]"),
+                #         BarColumn(bar_width=40),
+                #         TextColumn("[bold cyan]Please wait[/bold cyan]"),
+                #     ) as progress:
+                #         task = progress.add_task("Analyzing", total=100)
+                #         progress.update(task, advance=50)
+                #         result = self.devops_tools._analyze_logs(log_file)
+                #         progress.update(task, advance=50)
                     
-                    self._display_result(result, "📊 Log Analysis Results")
+                #     self._display_result(result, "📊 Log Analysis Results")
                 
-                elif choice == "2":
+                if choice == "2":
                     # Check if GitHub repo URL is available
                     if self.github_repo_url:
                         self.layout["input"].update(self._create_input_panel(f"Generating infrastructure suggestions for {self.github_repo_url}"))
@@ -365,150 +367,150 @@ class TextDashboard:
                             progress.update(task, advance=50)
 
                     self._display_result(result, "🏗️ Infrastructure Recommendations")
-                elif choice == "3":
-                    # Update input panel with specific prompt
-                    self.layout["input"].update(self._create_input_panel("Enter target to scan"))
-                    live.refresh()
+                # elif choice == "3":
+                #     # Update input panel with specific prompt
+                #     self.layout["input"].update(self._create_input_panel("Enter target to scan"))
+                #     live.refresh()
                     
-                    # Exit Live context to get input
-                    live.stop()
-                    self.console.print("\n")
-                    target = Prompt.ask("[bold green]►[/bold green] [bold cyan]Enter target to scan[/bold cyan]")
-                    live.start()
+                #     # Exit Live context to get input
+                #     live.stop()
+                #     self.console.print("\n")
+                #     target = Prompt.ask("[bold green]►[/bold green] [bold cyan]Enter target to scan[/bold cyan]")
+                #     live.start()
                     
-                    with Progress(
-                        SpinnerColumn(),
-                        TextColumn("[bold cyan]Scanning for security issues...[/bold cyan]"),
-                        BarColumn(bar_width=40),
-                    ) as progress:
-                        task = progress.add_task("Scanning", total=100)
-                        progress.update(task, advance=50)
-                        result = self.devops_tools._security_scan(target)
-                        progress.update(task, advance=50)
+                #     with Progress(
+                #         SpinnerColumn(),
+                #         TextColumn("[bold cyan]Scanning for security issues...[/bold cyan]"),
+                #         BarColumn(bar_width=40),
+                #     ) as progress:
+                #         task = progress.add_task("Scanning", total=100)
+                #         progress.update(task, advance=50)
+                #         result = self.devops_tools._security_scan(target)
+                #         progress.update(task, advance=50)
                     
-                    self._display_result(result, "🔒 Security Scan Results")
+                #     self._display_result(result, "🔒 Security Scan Results")
                 
-                elif choice == "4":
-                    # Update input panel with specific prompt
-                    self.layout["input"].update(self._create_input_panel("Enter optimization context"))
-                    live.refresh()
+                # elif choice == "4":
+                #     # Update input panel with specific prompt
+                #     self.layout["input"].update(self._create_input_panel("Enter optimization context"))
+                #     live.refresh()
                     
-                    # Exit Live context to get input
-                    live.stop()
-                    self.console.print("\n")
-                    context = Prompt.ask("[bold green]►[/bold green] [bold cyan]Enter optimization context[/bold cyan]")
-                    live.start()
+                #     # Exit Live context to get input
+                #     live.stop()
+                #     self.console.print("\n")
+                #     context = Prompt.ask("[bold green]►[/bold green] [bold cyan]Enter optimization context[/bold cyan]")
+                #     live.start()
                     
-                    with Progress(
-                        SpinnerColumn(),
-                        TextColumn("[bold cyan]Generating optimization recommendations...[/bold cyan]"),
-                        BarColumn(bar_width=40),
-                    ) as progress:
-                        task = progress.add_task("Optimizing", total=100)
-                        progress.update(task, advance=50)
-                        result = self.devops_tools._optimize(context)
-                        progress.update(task, advance=50)
+                #     with Progress(
+                #         SpinnerColumn(),
+                #         TextColumn("[bold cyan]Generating optimization recommendations...[/bold cyan]"),
+                #         BarColumn(bar_width=40),
+                #     ) as progress:
+                #         task = progress.add_task("Optimizing", total=100)
+                #         progress.update(task, advance=50)
+                #         result = self.devops_tools._optimize(context)
+                #         progress.update(task, advance=50)
                     
-                    self._display_result(result, "⚡ Optimization Recommendations")
+                #     self._display_result(result, "⚡ Optimization Recommendations")
 
-                elif choice == "5":
-                    if not self.github_repo_url:
-                        self.console.print("[bold red]GitHub repository URL not set. Please restart or set it.[/bold red]")
-                        live.refresh()
-                        continue
+                # elif choice == "5":
+                #     if not self.github_repo_url:
+                #         self.console.print("[bold red]GitHub repository URL not set. Please restart or set it.[/bold red]")
+                #         live.refresh()
+                #         continue
 
-                    self.layout["input"].update(self._create_input_panel(f"Processing Git Ingest for {self.github_repo_url}"))
-                    live.refresh()
+                #     self.layout["input"].update(self._create_input_panel(f"Processing Git Ingest for {self.github_repo_url}"))
+                #     live.refresh()
                     
-                    with Progress(
-                        SpinnerColumn(),
-                        TextColumn("[bold cyan]Ingesting repository...[/bold cyan]"),
-                        BarColumn(bar_width=40),
-                        TextColumn("[bold cyan]Please wait[/bold cyan]"),
-                    ) as progress:
-                        task = progress.add_task("Ingesting", total=100)
-                        progress.update(task, advance=50)
-                        try:
-                            result = self.devops_tools._git_ingest(self.github_repo_url) 
-                        except AttributeError:
-                            result = f"Git ingest functionality for '{self.github_repo_url}' is under development."
-                        progress.update(task, advance=50)
+                #     with Progress(
+                #         SpinnerColumn(),
+                #         TextColumn("[bold cyan]Ingesting repository...[/bold cyan]"),
+                #         BarColumn(bar_width=40),
+                #         TextColumn("[bold cyan]Please wait[/bold cyan]"),
+                #     ) as progress:
+                #         task = progress.add_task("Ingesting", total=100)
+                #         progress.update(task, advance=50)
+                #         try:
+                #             result = self.devops_tools._git_ingest(self.github_repo_url) 
+                #         except AttributeError:
+                #             result = f"Git ingest functionality for '{self.github_repo_url}' is under development."
+                #         progress.update(task, advance=50)
                     
-                    self._display_result(result, "⚙️ Git Ingest Results")
+                #     self._display_result(result, "⚙️ Git Ingest Results")
                     
-                    # Reset active tool after operation
-                    self.active_tool = None
-                    self.layout["tools"].update(self._create_tools_panel())
-                    self.layout["input"].update(self._create_input_panel())
-                    live.refresh()
+                #     # Reset active tool after operation
+                #     self.active_tool = None
+                #     self.layout["tools"].update(self._create_tools_panel())
+                #     self.layout["input"].update(self._create_input_panel())
+                #     live.refresh()
 
-                elif choice == "6":
-                    if not self.github_repo_url:
-                        self.console.print("[bold red]GitHub repository URL not set. Please restart or set it.[/bold red]")
-                        live.refresh()
-                        continue
+                # elif choice == "6":
+                #     if not self.github_repo_url:
+                #         self.console.print("[bold red]GitHub repository URL not set. Please restart or set it.[/bold red]")
+                #         live.refresh()
+                #         continue
 
-                    self.layout["input"].update(self._create_input_panel(f"Analyzing code quality for {self.github_repo_url}"))
-                    live.refresh()
+                #     self.layout["input"].update(self._create_input_panel(f"Analyzing code quality for {self.github_repo_url}"))
+                #     live.refresh()
                     
-                    with Progress(
-                        SpinnerColumn(),
-                        TextColumn("[bold cyan]Analyzing code quality...[/bold cyan]"),
-                        BarColumn(bar_width=40),
-                        TextColumn("[bold cyan]Please wait[/bold cyan]"),
-                    ) as progress:
-                        task = progress.add_task("CodeQuality", total=100)
-                        progress.update(task, advance=50)
-                        result = self.devops_tools._code_quality(self.github_repo_url)
-                        progress.update(task, advance=50)
+                #     with Progress(
+                #         SpinnerColumn(),
+                #         TextColumn("[bold cyan]Analyzing code quality...[/bold cyan]"),
+                #         BarColumn(bar_width=40),
+                #         TextColumn("[bold cyan]Please wait[/bold cyan]"),
+                #     ) as progress:
+                #         task = progress.add_task("CodeQuality", total=100)
+                #         progress.update(task, advance=50)
+                #         result = self.devops_tools._code_quality(self.github_repo_url)
+                #         progress.update(task, advance=50)
                     
-                    self._display_result(result, "🧑‍💻 Code Quality Analysis")
+                #     self._display_result(result, "🧑‍💻 Code Quality Analysis")
 
-                elif choice == "7":
-                    if not self.github_repo_url:
-                        self.console.print("[bold red]GitHub repository URL not set. Please restart or set it.[/bold red]")
-                        live.refresh()
-                        continue
+                # elif choice == "7":
+                #     if not self.github_repo_url:
+                #         self.console.print("[bold red]GitHub repository URL not set. Please restart or set it.[/bold red]")
+                #         live.refresh()
+                #         continue
 
-                    self.layout["input"].update(self._create_input_panel(f"Checking dependencies for {self.github_repo_url}"))
-                    live.refresh()
+                #     self.layout["input"].update(self._create_input_panel(f"Checking dependencies for {self.github_repo_url}"))
+                #     live.refresh()
                     
-                    with Progress(
-                        SpinnerColumn(),
-                        TextColumn("[bold cyan]Checking dependencies...[/bold cyan]"),
-                        BarColumn(bar_width=40),
-                        TextColumn("[bold cyan]Please wait[/bold cyan]"),
-                    ) as progress:
-                        task = progress.add_task("DependencyCheck", total=100)
-                        progress.update(task, advance=50)
-                        result = self.devops_tools._dependency_check(self.github_repo_url)
-                        progress.update(task, advance=50)
+                #     with Progress(
+                #         SpinnerColumn(),
+                #         TextColumn("[bold cyan]Checking dependencies...[/bold cyan]"),
+                #         BarColumn(bar_width=40),
+                #         TextColumn("[bold cyan]Please wait[/bold cyan]"),
+                #     ) as progress:
+                #         task = progress.add_task("DependencyCheck", total=100)
+                #         progress.update(task, advance=50)
+                #         result = self.devops_tools._dependency_check(self.github_repo_url)
+                #         progress.update(task, advance=50)
                     
-                    self._display_result(result, "📦 Dependency Check Results")
+                #     self._display_result(result, "📦 Dependency Check Results")
 
-                elif choice == "8":
-                    if not self.github_repo_url:
-                        self.console.print("[bold red]GitHub repository URL not set. Please restart or set it.[/bold red]")
-                        live.refresh()
-                        continue
+                # elif choice == "8":
+                #     if not self.github_repo_url:
+                #         self.console.print("[bold red]GitHub repository URL not set. Please restart or set it.[/bold red]")
+                #         live.refresh()
+                #         continue
 
-                    self.layout["input"].update(self._create_input_panel(f"Fetching contributors for {self.github_repo_url}"))
-                    live.refresh()
+                #     self.layout["input"].update(self._create_input_panel(f"Fetching contributors for {self.github_repo_url}"))
+                #     live.refresh()
                     
-                    with Progress(
-                        SpinnerColumn(),
-                        TextColumn("[bold cyan]Fetching contributor statistics...[/bold cyan]"),
-                        BarColumn(bar_width=40),
-                        TextColumn("[bold cyan]Please wait[/bold cyan]"),
-                    ) as progress:
-                        task = progress.add_task("Contributors", total=100)
-                        progress.update(task, advance=50)
-                        result = self.devops_tools._contributors(self.github_repo_url)
-                        progress.update(task, advance=50)
+                #     with Progress(
+                #         SpinnerColumn(),
+                #         TextColumn("[bold cyan]Fetching contributor statistics...[/bold cyan]"),
+                #         BarColumn(bar_width=40),
+                #         TextColumn("[bold cyan]Please wait[/bold cyan]"),
+                #     ) as progress:
+                #         task = progress.add_task("Contributors", total=100)
+                #         progress.update(task, advance=50)
+                #         result = self.devops_tools._contributors(self.github_repo_url)
+                #         progress.update(task, advance=50)
                     
-                    self._display_result(result, "👥 Contributor Statistics")
+                #     self._display_result(result, "👥 Contributor Statistics")
                 
-                elif choice == "9":
+                elif choice == "1":
                     
                     if not self.github_repo_url:
                         self.console.print("[bold red]GitHub repository URL not set. Please restart or set it.[/bold red]")

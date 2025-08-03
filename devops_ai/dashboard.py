@@ -73,17 +73,18 @@ class TextDashboard:
             self._display_result(clone_output, "Git Clone Output")
 
         handlers = {
-            "1": self.tool_handlers.analyze_logs,
+            # "1": self.tool_handlers.analyze_logs,
+            "1": self.tool_handlers.docker_generation,
             "2": self.tool_handlers.infrastructure,
-            "3": self.tool_handlers.security_scan,
-            "4": self.tool_handlers.optimize,
-            "5": self.tool_handlers.git_ingest,
-            "6": self.tool_handlers.code_quality,
-            "7": self.tool_handlers.dependency_check,
-            "8": self.tool_handlers.contributors,
-            "9": self.tool_handlers.docker_generation,
-            "10": self.tool_handlers.analyze_repo,
-            "11":self.tool_handlers.analyze_grafana_repo
+            # "3": self.tool_handlers.security_scan,
+            # "4": self.tool_handlers.optimize,
+            # "5": self.tool_handlers.git_ingest,
+            # "6": self.tool_handlers.code_quality,
+            # "7": self.tool_handlers.dependency_check,
+            # "8": self.tool_handlers.contributors,
+            
+            # "10": self.tool_handlers.analyze_repo,
+            "3":self.tool_handlers.analyze_grafana_repo
         }
 
         # Start Live rendering
@@ -119,17 +120,18 @@ class TextDashboard:
 
     def _render_tools_panel(self):
         tools = [
-            {"key": "1", "icon": "📊", "name": "Analyze Logs", "desc": "Analyze log files for patterns and errors"},
+            # {"key": "1", "icon": "📊", "name": "Analyze Logs", "desc": "Analyze log files for patterns and errors"},
+            {"key": "1", "icon": "🐳", "name": "Docker Generation", "desc": "Generate Docker and docker-compose files"},
+
             {"key": "2", "icon": "🏗️", "name": "Infrastructure", "desc": "Get infrastructure recommendations"},
-            {"key": "3", "icon": "🔒", "name": "Security Scan", "desc": "Perform security vulnerability scanning"},
-            {"key": "4", "icon": "⚡", "name": "Optimize", "desc": "Performance optimization suggestions"},
-            {"key": "5", "icon": "⚙️", "name": "Git Ingest", "desc": "Ingest and process GitHub repository"},
-            {"key": "6", "icon": "🧑‍💻", "name": "Code Quality", "desc": "Analyze code quality and maintainability"},
-            {"key": "7", "icon": "📦", "name": "Dependency Check", "desc": "Check outdated or vulnerable dependencies"},
-            {"key": "8", "icon": "👥", "name": "Contributors", "desc": "Show contributor statistics and activity"},
-            {"key": "9", "icon": "🐳", "name": "Docker Generation", "desc": "Generate Docker and docker-compose files"},
-            {"key": "10", "icon": "🔍", "name": "Repo Analyze", "desc": "Analyze the GitHub repository for insights"},
-            {"key": "11","icon": "📈","name": "Monitoring Audit","desc": "Analyze Prometheus and Grafana configurations for observability, alerting, and visualization insights"}
+            # {"key": "3", "icon": "🔒", "name": "Security Scan", "desc": "Perform security vulnerability scanning"},
+            # {"key": "4", "icon": "⚡", "name": "Optimize", "desc": "Performance optimization suggestions"},
+            # {"key": "5", "icon": "⚙️", "name": "Git Ingest", "desc": "Ingest and process GitHub repository"},
+            # {"key": "6", "icon": "🧑‍💻", "name": "Code Quality", "desc": "Analyze code quality and maintainability"},
+            # {"key": "7", "icon": "📦", "name": "Dependency Check", "desc": "Check outdated or vulnerable dependencies"},
+            # {"key": "8", "icon": "👥", "name": "Contributors", "desc": "Show contributor statistics and activity"},
+            # {"key": "10", "icon": "🔍", "name": "Repo Analyze", "desc": "Analyze the GitHub repository for insights"},
+            {"key": "3","icon": "📈","name": "Monitoring Audit","desc": "Analyze Prometheus and Grafana configurations for observability, alerting, and visualization insights"}
 
         ]
 
@@ -150,7 +152,8 @@ class TextDashboard:
                 return "\r"
             elif key == 'q':
                 return "q"
-            elif key.isdigit() and 1 <= int(key) <= 11:
+            elif key.isdigit() and 1 <= int(key) <= 3:
+            # elif key.isdigit() and 1 <= int(key) <= 11:
                 return key
         return None
 
