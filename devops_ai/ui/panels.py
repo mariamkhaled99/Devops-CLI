@@ -36,11 +36,6 @@ def create_header() -> Panel:
     )
 
 
-# devops_ai/ui/panels.py
-
-from rich.panel import Panel
-from rich.text import Text
-from rich.box import HEAVY
 
 
 def create_tools_panel(selected_tool: dict = None) -> Panel:
