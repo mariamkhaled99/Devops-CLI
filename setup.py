@@ -8,7 +8,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="syntera-ai-cli",
-    version="0.1.7.2",  # Updated version
+    version="0.1.7.3",  # Updated version
     author="Fouad Mahmoud",
     author_email="fouadmahmoud281@gmail.com",
     description="An AI-powered DevOps toolkit for infrastructure automation and analysis",
@@ -70,13 +70,14 @@ setup(
         "pygithub==2.6.1",
 
         # Keyboard interactions (might require elevated privileges)
-        "keyboard==0.13.5",
+        # "keyboard==0.13.5",
+        "inquirer==3.4.1",  # Interactive CLI prompts
 
         # Packaging
         "setuptools==75.2.0",
         
         "tiktoken==0.7.0",              # Tokenization for OpenAI models
-        "windows-curses==2.4.1",  # Curses support for Windows (if needed)
+        # "windows-curses==2.4.1",  # Curses support for Windows (if needed)
     ],
     entry_points={
         "console_scripts": [
