@@ -8,7 +8,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="syntera-ai-cli",
-    version="0.1.6",  # Updated version
+    version="0.1.7",  # Updated version
     author="Fouad Mahmoud",
     author_email="fouadmahmoud281@gmail.com",
     description="An AI-powered DevOps toolkit for infrastructure automation and analysis",
@@ -76,7 +76,7 @@ setup(
         "setuptools==75.2.0",
         
         "tiktoken==0.7.0",              # Tokenization for OpenAI models
-
+        "windows-curses==2.4.1",  # Curses support for Windows (if needed)
     ],
     entry_points={
         "console_scripts": [

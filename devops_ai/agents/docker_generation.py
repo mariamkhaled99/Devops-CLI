@@ -169,7 +169,7 @@ class DockerGenerationAgent(BaseAgent):
 
     Follow these guidelines strictly:
     - Use multi-stage builds only in case of frontend or backend js based applications .
-    - If system-level packages are required, install them *before* switching to a non-root user.
+    - If system-level packages are required, install them first .
     - Before installing application dependencies, install required system-level build tools using the system_packages field in frontend and backend as well .
     - if typescript in the system_packages field, install it using npm install -g typescript in addition with package.json install.
     - Make sure to install npm install instead of npm ci (always).
@@ -272,6 +272,7 @@ class DockerGenerationAgent(BaseAgent):
             - .env
     - If not provided, do not add env_file at all.
     - Do not use 'version' .
+    -Make sure to use the correct port for each service based on the framework info and if there is conflict map it.
     - Do not add any comments in the docker_compose.yml.
     """
 
