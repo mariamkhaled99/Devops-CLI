@@ -8,7 +8,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="syntera-ai-cli",
-    version="0.1.7.3",  # Updated version
+    version="0.1.7.4",  # Updated version
     author="Fouad Mahmoud",
     author_email="fouadmahmoud281@gmail.com",
     description="An AI-powered DevOps toolkit for infrastructure automation and analysis",
@@ -72,6 +72,7 @@ setup(
         # Keyboard interactions (might require elevated privileges)
         # "keyboard==0.13.5",
         "inquirer==3.4.1",  # Interactive CLI prompts
+        "pyfiglet==1.0.3",  # ASCII art generation
 
         # Packaging
         "setuptools==75.2.0",

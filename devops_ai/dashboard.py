@@ -159,110 +159,137 @@
 
 # if __name__ == "__main__":
 #     main()
-
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from rich.box import ROUNDED, HEAVY
+import pyfiglet
 import inquirer
-from typing import Dict, Tuple
+from typing import Callable, List, Optional, Tuple
+
 from .ui.tool_handlers import ToolHandlers
 from .core import DevOpsAITools
 
-class TextDashboard:
-    """An enhanced text-based dashboard for SynteraAI DevOps."""
 
+class TextDashboard:
     def __init__(self):
         self.console = Console()
         self.devops_tools = DevOpsAITools()
         self.tool_handlers = ToolHandlers(self.devops_tools, self.console)
-        self.github_repo_url = None
-        self.local_repo_path = None
+        self.github_repo_url: Optional[str] = None
+        self.local_repo_path: Optional[str] = None
+
+        self.tools: List[Tuple[str, str, Optional[Callable[[], Tuple[str, str]]]]] = [
+            ("🐳 Docker Generation ", "Generate Docker and docker-compose files", self.tool_handlers.docker_generation),
+            ("🏗️ Infrastructure", "Get infrastructure recommendations", self.tool_handlers.infrastructure),
+            ("📈 Monitoring Audit ", "Analyze Prometheus/Grafana configurations", self.tool_handlers.analyze_grafana_repo),
+            ("❌ Exit", "Exit the dashboard ", None),
+        ]
+
+    def _display_ascii_logo(self):
+        ascii_banner = pyfiglet.figlet_format("Syntera AI DevOps", font="slant")
+        self.console.print(f"[bold cyan]{ascii_banner}[/bold cyan]")
+
+    def _display_welcome_panel(self):
+        panel = Panel.fit(
+            "[bold white on blue] Welcome to SynteraAI DevOps Dashboard [/bold white on blue]",
+            box=HEAVY,
+            padding=(1, 4),
+            style="cyan"
+        )
+        self.console.print(panel)
+
+    def _display_tools_table(self):
+        table = Table(
+            title="🛠️ Available Tools",
+            title_style="bold green",
+            header_style="bold cyan",
+            box=ROUNDED,
+            border_style="blue"
+        )
+        table.add_column("Option", style="bold")
+        table.add_column("Tool", style="white")
+        table.add_column("Description", style="dim")
+
+        for i, (name, desc, _) in enumerate(self.tools, start=1):
+            table.add_row(str(i), name, desc)
+
+        self.console.print(table)
 
     def _display_result(self, result: str, title: str) -> None:
-        """Display the result in a structured table"""
         table = Table(
             title=title,
             show_header=True,
             header_style="bold magenta",
             border_style="blue",
-            title_style="bold cyan"
+            title_style="bold white",
+            box=ROUNDED
         )
-        table.add_column("Content", style="dim")
-        
-        for section in result.split("\n\n"):
+        table.add_column("Content", style="dim", overflow="fold")
+
+        for section in result.strip().split("\n\n"):
             if section.strip():
-                table.add_row(section)
-        
+                table.add_row(section.strip())
+
         self.console.print(table)
 
-    def run(self):
-        """Run the dashboard with inquirer-based menu."""
-        self.console.clear()
-        self.console.print(Panel.fit(
-            "Welcome to SynteraAI DevOps Dashboard",
-            style="bold cyan"
-        ))
-
-        # Get GitHub repository URL
+    def _prompt_repo_url(self) -> None:
         questions = [
             inquirer.Text(
                 'repo_url',
                 message="Enter the GitHub repository URL to work on",
-                default="https://github.com/example/repo"
+                default="https://github.com/username/reponame"
             )
         ]
         answers = inquirer.prompt(questions)
-        self.github_repo_url = answers['repo_url']
+        if answers:
+            self.github_repo_url = answers['repo_url']
+            self.console.print("\n[cyan]📦 Cloning repository...[/cyan]\n")
+            output, self.local_repo_path = self.tool_handlers.set_repository(self.github_repo_url)
+            if output:
+                self._display_result(output, "Git Clone Output")
 
-        # Clone repository
-        clone_output, self.local_repo_path = self.tool_handlers.set_repository(self.github_repo_url)
-        if clone_output:
-            self._display_result(clone_output, "Git Clone Output")
+    def run(self) -> None:
+        self.console.clear()
+        self._display_ascii_logo()
+        self._display_welcome_panel()
+        self._prompt_repo_url()
 
         while True:
-            # Define available tools
-            tools = [
-                ("Docker Generation 🐳", self.tool_handlers.docker_generation),
-                ("Infrastructure 🏗️", self.tool_handlers.infrastructure),
-                ("Monitoring Audit 📈", self.tool_handlers.analyze_grafana_repo),
-                ("Exit ❌", None)
-            ]
+            self._display_tools_table()
 
-            questions = [
+            choices = [f"{label}" for label, _, _ in self.tools]
+            answers = inquirer.prompt([
                 inquirer.List(
-                    'action',
-                    message="Choose an action",
-                    choices=[tool[0] for tool in tools],
+                    "action",
+                    message="Choose a tool to run",
+                    choices=choices,
                 )
-            ]
+            ])
 
-            answers = inquirer.prompt(questions)
-            
-            if not answers:  # Handle Ctrl+C
+            if not answers:
+                break  # e.g. Ctrl+C
+
+            selected_label = answers["action"]
+            if selected_label == "❌ Exit":
+                self.console.print("\n[bold red]Exiting...[/bold red]")
                 break
 
-            selected_action = answers['action']
-            
-            if selected_action == "Exit ❌":
-                break
-
-            # Find and execute the selected handler
-            for tool_name, handler in tools:
-                if tool_name == selected_action and handler:
+            for name, _, handler in self.tools:
+                if name == selected_label and handler:
+                    self.console.print(f"\n[green]Running:[/green] {name}\n")
                     try:
                         result, title = handler()
                         self._display_result(result, title)
                     except Exception as e:
-                        self.console.print(f"[red]Error:[/red] {str(e)}")
-                    
-                    # Wait for user input before showing menu again
-                    input("\nPress Enter to continue...")
-                    break
+                        self.console.print(f"[red]❌ Error:[/red] {str(e)}")
+                    input("\nPress [bold]Enter[/bold] to continue...")
+
 
 def main():
-    """Main entry point for the dashboard."""
     dashboard = TextDashboard()
     dashboard.run()
+
 
 if __name__ == "__main__":
     main()

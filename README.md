@@ -35,10 +35,17 @@ Another great option:
 use `.env `file .
 
 
-2. Run the dashboard:
+2. Run the dashboard
+- in windows :
 ```bash
 syntera-ai dashboard
 ```
+- in unix (mac or linux):
+
+```bash
+sudo GEMINI_API_KEY=$GEMINI_API_KEY syntera-ai dashboard
+```
+
 
 3. Enter your GitHub repository URL when prompted.
 
