@@ -18,6 +18,7 @@ from langchain_community.agent_toolkits import JsonToolkit, create_json_agent
 from langchain_community.tools.json.tool import JsonSpec
 from pprint import pprint
 from langchain.output_parsers import PydanticOutputParser
+import importlib.resources as pkg_resources
 
 
 
