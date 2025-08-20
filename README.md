@@ -5,13 +5,15 @@ An AI-powered DevOps toolkit for infrastructure automation and analysis. This to
 ## Features
 
 - 🤖 AI-powered infrastructure recommendations
-- 🔒 Security scanning and analysis
-- 📊 Code quality analysis
-- 🐳 Docker file generation
+
+- 🐳 Automatic Dockerfile generation
+
 - 📦 Dependency checking
-- 👥 Contributor statistics
-- 📝 Log analysis
-- ⚡ Performance optimization suggestions
+
+- ⚙️ Deployment automation with Ansible
+
+- 📊 Monitoring automation with Prometheus and Grafana
+
 
 ## Installation
 
@@ -51,9 +53,8 @@ sudo GEMINI_API_KEY=$GEMINI_API_KEY syntera-ai dashboard
 
 4. Use the interactive dashboard to:
    - Generate infrastructure recommendations
-   - Perform security scans
-   - Analyze code quality
    - Generate Docker files
+   - Generate ansible deployment files
    - And more!
 
 ## Usage Examples
