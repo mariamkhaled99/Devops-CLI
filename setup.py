@@ -8,7 +8,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="syntera-ai-cli",
-    version="0.1.7.5",  # Updated version
+    version="0.1.7.6",  # Updated version
     author="Fouad Mahmoud",
     author_email="fouadmahmoud281@gmail.com",
     description="An AI-powered DevOps toolkit for infrastructure automation and analysis",
@@ -16,20 +16,10 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/mariamkhaled99/Devops-CLI",
     packages=find_packages(),
-    include_package_data=True,
+    include_package_data=True,  
     package_data={
-        "devops_ai": [
-            # JSON modules
-            "agents/aws/*.json",
-
-            # Monitoring playbooks
-            "agents/mointoring/*.yml",
-
-            # Roles (tasks, defaults, templates)
-            "agents/mointoring/roles/**/*.yml",
-            "agents/mointoring/roles/**/*.j2",
-            "agents/mointoring/roles/**/*.ini.j2",
-        ],
+        "devops_ai.agents.aws": ["*"],  # all files under aws
+        "devops_ai.agents.monitoring": ["*"],  # all files under monitoring
     },
     classifiers=[
         "Development Status :: 3 - Alpha",
