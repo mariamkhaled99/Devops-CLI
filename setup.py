@@ -1,14 +1,49 @@
 # setup.py
 
+import os
 from setuptools import setup, find_packages
 
 # Read long description from README.md
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
+    
 
+def get_package_data():
+    """Collect all static files for package_data"""
+    package_data = {}
+    
+    # AWS directory
+    aws_files = []
+    aws_path = 'devops_ai/agents/aws'
+    if os.path.exists(aws_path):
+        for root, dirs, files in os.walk(aws_path):
+            for file in files:
+                if not file.endswith('.py'):  # Exclude Python files
+                    rel_path = os.path.relpath(os.path.join(root, file), aws_path)
+                    aws_files.append(rel_path)
+    if aws_files:
+        package_data['devops_ai.agents.aws'] = aws_files
+    
+    # Monitoring directory  
+    monitoring_files = []
+    monitoring_path = 'devops_ai/agents/monitoring'
+    if os.path.exists(monitoring_path):
+        for root, dirs, files in os.walk(monitoring_path):
+            for file in files:
+                if not file.endswith('.py'):  # Exclude Python files
+                    rel_path = os.path.relpath(os.path.join(root, file), monitoring_path)
+                    monitoring_files.append(rel_path)
+    if monitoring_files:
+        package_data['devops_ai.agents.monitoring'] = monitoring_files
+    
+    return package_data
+
+# Get package data
+package_data = get_package_data()
+print(f"Package data found: {package_data}")
 setup(
     name="syntera-ai-cli",
-    version="0.1.7.7",  # Updated version
+    version="0.1.7.8",  # Updated version
     author="Fouad Mahmoud",
     author_email="fouadmahmoud281@gmail.com",
     description="An AI-powered DevOps toolkit for infrastructure automation and analysis",
@@ -16,12 +51,8 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/mariamkhaled99/Devops-CLI",
     packages=find_packages(),
-     include_package_data=True,  # This is CRITICAL for MANIFEST.in to work
+    package_data=package_data,
     zip_safe=False,
-    # package_data={
-    #     "devops_ai.agents.aws": ["*"],  # all files under aws
-    #     "devops_ai.agents.monitoring": ["*"],  # all files under monitoring
-    # },
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
